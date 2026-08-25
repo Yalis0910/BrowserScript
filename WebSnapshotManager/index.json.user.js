@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         网站快照存储与恢复助手
 // @namespace    https://github.com/moyefu/BrowserScript/WebSnapshotManager
-// @version      1.1.3
+// @version      1.1.4
 // @description  针对指定网站实现快照（Cookie、LocalStorage、SessionStorage）的一键存储、命名、加密备份与一键恢复
 // @author       MOYEFU
 // @icon         https://pic1.imgdb.cn/i/034D4F8VwYLLoU73kkQs3l.gif
@@ -23,9 +23,17 @@
 
 /* ==UserConfig==
 Config:
-  show_host:
-    title: 显示的主机 (多个用换行区分)
-    description: 每行一条，支持通配符 * ，例：https://*.example.org*；不填写则所有网站默认不显示
+  filter_mode:
+    title: 域名过滤模式
+    description: 白名单模式：仅对列表中的网站生效；黑名单模式：对除列表中之外的所有网站生效
+    type: select
+    values:
+      - [whitelist, 白名单模式 (仅在列表中生效)]
+      - [blacklist, 黑名单模式 (列表中的不生效)]
+    default: whitelist
+  host_list:
+    title: 域名列表 (每行一条)
+    description: 每行一条，支持通配符 * ，例：https://*.example.org* 或 *.baidu.com；白名单模式下仅列表内网站显示，黑名单模式下列表内网站不显示
     type: textarea
     default: ""
   enable_encryption:
@@ -43,37 +51,61 @@ Config:
 // 全局暴露的 UI 实例，供菜单命令与外部调度使用
 let LSM_UI = null;
 
+// 获取域名过滤模式，自动提取前面英文关键词（whitelist / blacklist）
+function getFilterMode() {
+  let val = GM_getValue("Config.filter_mode", "whitelist");
+  if (Array.isArray(val)) {
+    val = val[0];
+  }
+  const match = String(val || "").match(/[a-zA-Z]+/);
+  const mode = match ? match[0].toLowerCase() : "whitelist";
+  return mode === "blacklist" ? "blacklist" : "whitelist";
+}
+
 (async () => {
   "use strict";
 
   // =========================================================================
-  // 0. 用户配置：show_host（每行一条，支持 * 通配符）→ 默认所有网站不显示，
-  //    仅匹配到列表中的网站才运行脚本
+  // 0. 用户配置：filter_mode（白名单/黑名单）+ host_list（域名列表，支持 * 通配符）
+  //    默认白名单模式：仅匹配到列表中的网站才运行脚本
+  //    黑名单模式：匹配到列表中的网站不运行，其他网站均运行
   // =========================================================================
+  function getHostRules() {
+    let raw = GM_getValue("Config.host_list", null);
+    if (raw === null || raw === undefined) {
+      raw = GM_getValue("Config.show_host", "");
+    }
+    return String(raw || "")
+      .split("\n")
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
+
+  function isHostMatched() {
+    const lines = getHostRules();
+    if (!lines.length) return false;
+    const candidates = [
+      location.href,
+      location.origin,
+      location.protocol + "//" + location.host,
+      location.host,
+      location.hostname
+    ];
+    return lines.some((line) => {
+      const re = new RegExp(line ? ("^" + line.replace(/[.+?^${}()|[\\]\\]/g, "\\$&").replace(/\\*/g, ".*") + "$") : "^$", "i");
+      return candidates.some((c) => re.test(c));
+    });
+  }
+
   function hostBlocked() {
     try {
-      const raw = GM_getValue("Config.show_host", "");
-      const lines = String(raw || "")
-        .split("\n")
-        .map((s) => s.trim())
-        .filter(Boolean);
-      if (!lines.length) return true; // 未配置任何显示网站 → 默认全部不显示
-      const candidates = [
-        location.href,
-        location.origin,
-        location.protocol + "//" + location.host,
-        location.host,
-        location.hostname
-      ];
-      const matched = lines.some((line) => {
-        const re = new RegExp(
-          "^" + line.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*") + "$",
-          "i"
-        );
-        return candidates.some((c) => re.test(c));
-      });
+      const mode = getFilterMode();
+      const matched = isHostMatched();
+      const lines = getHostRules();
+      if (mode === "blacklist") return matched;
+      if (!lines.length) return true;
       return !matched;
-    } catch {
+    } catch (e) {
       return true;
     }
   }
@@ -92,33 +124,19 @@ let LSM_UI = null;
   initApp();
 })();
 
-// 把当前站点（origin）加入 show_host 显示列表（永久开启）
-function addHostToShowList() {
+// 永久开启当前站点（白名单模式下加入列表，黑名单模式下移出列表）
+function enableCurrentHost() {
   try {
-    const raw = GM_getValue("Config.show_host", "");
-    const lines = String(raw || "")
-      .split("\n")
-      .map((s) => s.trim())
-      .filter(Boolean);
-    const entry = location.origin;
-    if (!lines.some((l) => l === entry)) {
-      lines.push(entry);
-      GM_setValue("Config.show_host", lines.join("\n"));
-    }
-  } catch (e) {
-    console.error("[LSM] 写入配置失败:", e);
-  }
-}
+    const mode = getFilterMode();
 
-// 把当前站点从 show_host 显示列表中移除（永久关闭）
-function removeHostFromShowList() {
-  try {
-    const raw = GM_getValue("Config.show_host", "");
-    const lines = String(raw || "")
+    let raw = GM_getValue("Config.host_list", null);
+    if (raw === null || raw === undefined) {
+      raw = GM_getValue("Config.show_host", "");
+    }
+    let lines = String(raw || "")
       .split("\n")
       .map((s) => s.trim())
       .filter(Boolean);
-    if (!lines.length) return;
 
     const candidates = [
       location.href,
@@ -128,21 +146,72 @@ function removeHostFromShowList() {
       location.hostname
     ];
 
-    const kept = lines.filter((line) => {
+    if (mode === "blacklist") {
+      lines = lines.filter((line) => {
+        const re = new RegExp(
+          "^" + line.replace(/[.+?^${}()|[\\]\\]/g, "\\$&").replace(/\\*/g, ".*") + "$",
+          "i"
+        );
+        return !candidates.some((c) => re.test(c));
+      });
+    } else {
+      const entry = location.origin;
+      if (!lines.some((l) => l === entry)) {
+        lines.push(entry);
+      }
+    }
+    GM_setValue("Config.host_list", lines.join("\n"));
+  } catch (e) {
+    console.error("[LSM] 写入配置失败:", e);
+  }
+}
+const addHostToShowList = enableCurrentHost;
+
+// 永久关闭当前站点（白名单模式下移出列表，黑名单模式下加入列表）
+function disableCurrentHost() {
+  try {
+    const mode = getFilterMode();
+
+    let raw = GM_getValue("Config.host_list", null);
+    if (raw === null || raw === undefined) {
+      raw = GM_getValue("Config.show_host", "");
+    }
+    let lines = String(raw || "")
+      .split("\n")
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+    const candidates = [
+      location.href,
+      location.origin,
+      location.protocol + "//" + location.host,
+      location.host,
+      location.hostname
+    ];
+
+    if (mode === "blacklist") {
+      const entry = location.origin;
+      if (!lines.some((l) => l === entry)) {
+        lines.push(entry);
+      }
+    } else {
+      lines = lines.filter((line) => {
       const re = new RegExp(
         "^" + line.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*") + "$",
         "i"
       );
       return !candidates.some((c) => re.test(c));
     });
+  }
 
-    GM_setValue("Config.show_host", kept.join("\n"));
+    GM_setValue("Config.host_list", lines.join("\n"));
   } catch (e) {
     console.error("[LSM] 移除配置失败:", e);
   }
 }
+const removeHostFromShowList = disableCurrentHost;
 
-// 本站在 show_host 之外被禁用时的处理：弹窗选择「临时显示」或「永久开启」
+// 本站被拦截禁用时的处理：弹窗选择「临时显示」或「永久开启」
 function ensureHostAnimationStyle() {
   if (!document.getElementById("lsm-host-animations")) {
     const style = document.createElement("style");
@@ -171,8 +240,12 @@ function showBlockedDialog() {
   title.innerHTML = "🔑 <span style='color:#0f172a;font-size:16px;font-weight:700;'>快照管理助手未激活</span>";
   title.style.cssText = "margin-bottom:10px;display:flex;align-items:center;gap:6px;";
 
+  const mode = getFilterMode();
+
   const desc = document.createElement("div");
-  desc.textContent = "当前网站不在「显示的主机」配置白名单中。你可以选择：";
+  desc.textContent = mode === "blacklist"
+    ? "当前网站已被加入「黑名单」列表中，快照助手未在此站点激活。你可以选择："
+    : "当前网站不在「白名单」列表中，快照助手未在此站点激活。你可以选择：";
   desc.style.cssText = "font-size:13px;color:#64748b;line-height:1.6;margin-bottom:18px;";
 
   const tempBtn = document.createElement("button");
@@ -182,7 +255,7 @@ function showBlockedDialog() {
     "background:linear-gradient(135deg,#3b82f6,#2563eb);color:#ffffff;font-size:13px;cursor:pointer;font-weight:600;box-shadow:0 2px 8px rgba(37,99,235,0.25);";
 
   const permBtn = document.createElement("button");
-  permBtn.textContent = "永久开启（加入显示列表）";
+  permBtn.textContent = mode === "blacklist" ? "永久开启（移出黑名单）" : "永久开启（加入白名单）";
   permBtn.style.cssText =
     "display:block;width:100%;padding:10px 0;border:1px solid #e2e8f0;border-radius:10px;" +
     "background:#f8fafc;color:#1e293b;font-size:13px;cursor:pointer;font-weight:600;";
@@ -236,8 +309,12 @@ function showMainDialog() {
   title.innerHTML = "🔑 <span style='color:#0f172a;font-size:16px;font-weight:700;'>快照管理助手</span>";
   title.style.cssText = "margin-bottom:10px;display:flex;align-items:center;gap:6px;";
 
+  const mode = getFilterMode();
+
   const desc = document.createElement("div");
-  desc.textContent = "当前网站已加入「显示的主机」，功能就绪。你可以选择：";
+  desc.textContent = mode === "blacklist"
+    ? "当前网站处于黑名单排除范围之外，功能就绪。你可以选择："
+    : "当前网站已在白名单允许列表中，功能就绪。你可以选择：";
   desc.style.cssText = "font-size:13px;color:#64748b;line-height:1.6;margin-bottom:18px;";
 
   const openBtn = document.createElement("button");
@@ -253,7 +330,7 @@ function showMainDialog() {
     "background:#f8fafc;color:#334155;font-size:13px;cursor:pointer;font-weight:500;";
 
   const permBtn = document.createElement("button");
-  permBtn.textContent = "永久关闭（从显示列表移除）";
+  permBtn.textContent = mode === "blacklist" ? "永久关闭（加入黑名单）" : "永久关闭（从白名单移除）";
   permBtn.style.cssText =
     "display:block;width:100%;padding:10px 0;border:1px solid #fecdd3;border-radius:10px;" +
     "background:#fff1f2;color:#e11d48;font-size:13px;cursor:pointer;font-weight:500;";
@@ -1817,7 +1894,7 @@ async function initApp() {
         <button data-a="open">打开快照管理窗口</button>
         <button data-a="save">一键加密保存当前快照</button>
         <button data-a="temp">临时隐藏悬浮球（本次）</button>
-        <button data-a="forever">永久关闭（从显示列表移除）</button>
+        <button data-a="forever">永久关闭（不再对此网站生效）</button>
       </div>
     </div>
 

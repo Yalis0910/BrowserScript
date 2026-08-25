@@ -1,8 +1,21 @@
 <div align="center">
   <h1>ScriptCat Agent 悬浮聊天窗</h1>
   <p><strong>AiAgent - Floating AI Chat Assistant</strong></p>
-  <p>一款专为 <strong>ScriptCat（脚本猫）</strong> 打造的现代化、高可定制悬浮球式 AI 聊天助手，支持多会话管理、流式对话响应、历史记录本地持久化与智能白名单机制。</p>
+  <p>一款专为 <strong>ScriptCat（脚本猫）Beta 版</strong> 打造的现代化、高可定制悬浮球式 AI 聊天助手，支持多会话管理、流式对话响应、历史记录本地持久化与智能白名单机制。</p>
+  <p>⚠️ <strong>运行环境提示</strong>：Agent 系列 API（<code>CAT.agent.*</code>）为 ScriptCat 前沿特性，<strong>目前仅在 ScriptCat Beta（测试版）中可用</strong>，稳定版及 Tampermonkey 暂不支持。</p>
 </div>
+
+---
+
+## 📌 环境依赖与安装
+
+使用本脚本前，必须安装 **ScriptCat Beta 版本**：
+
+- **Chrome 商店**：[脚本猫 Beta (Chrome Web Store)](https://chromewebstore.google.com/detail/%E8%84%9A%E6%9C%AC%E7%8C%AB-beta/jaehimmlecjmebpekkipmpmbpfhdacom?authuser=0&hl=zh-CN)
+- **Edge 商店**：[ScriptCat-Beta (Edge Addons)](https://microsoftedge.microsoft.com/addons/detail/scriptcat-beta/nimmbghgpcjmeniofmpdfkofcedcjpfi)
+- **Firefox 商店**：[ScriptCat-pre (Firefox Add-ons)](https://addons.mozilla.org/zh-CN/firefox/addon/scriptcat-pre/)
+- **离线安装 / GitHub Releases**：[ScriptCat Releases](https://github.com/scriptscat/scriptcat/releases)
+- **官方安装文档**：[ScriptCat 快速开始](https://docs.scriptcat.org/docs/use/use/)
 
 ---
 
