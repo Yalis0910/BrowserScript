@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="./logo.svg" width="128" height="128" alt="Web Snapshot Manager Logo" />
+  <img src="./logo.gif" width="128" height="128" alt="Web Snapshot Manager Logo" />
   <h1>网站快照存储与恢复助手</h1>
   <p><strong>Web Snapshot Manager</strong></p>
   <p>一款专为 <strong>ScriptCat（脚本猫）</strong> 与 <strong>Tampermonkey（油猴）</strong> 开发的现代化网页快照凭证（Cookie / LocalStorage / SessionStorage）一键捕获、高强度对称加密存储、多账号切换管理与跨环境导入导出工具。</p>
