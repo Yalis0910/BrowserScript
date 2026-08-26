@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         网站快照存储与恢复助手
 // @namespace    https://github.com/moyefu/BrowserScript/WebSnapshotManager
-// @version      1.1.4
+// @version      1.1.6
 // @description  针对指定网站实现快照（Cookie、LocalStorage、SessionStorage）的一键存储、命名、加密备份与一键恢复
 // @author       MOYEFU
 // @icon         https://pic1.imgdb.cn/i/034D4F8VwYLLoU73kkQs3l.gif
@@ -110,14 +110,52 @@ function getFilterMode() {
     }
   }
 
-  // 始终注册菜单命令（ScriptCat/Tampermonkey 菜单），按当前状态分发弹窗
-  GM_registerMenuCommand("🔑 快照管理助手", () => {
-    if (hostBlocked()) {
-      showBlockedDialog();
-    } else {
-      showMainDialog();
-    }
-  });
+  // =========================================================================
+  // 菜单命令注册（Tampermonkey / ScriptCat 菜单）
+  // 1. 🔑 快照管理助手
+  // 2. 🛡️ 过滤模式切换（白名单 / 黑名单）
+  // 3. 📝 编辑域名名单列表
+  // 4. 🔒 本地数据加密状态切换
+  // 5. 🔄 恢复后刷新跳转状态切换
+  // =========================================================================
+  function registerAllMenuCommands() {
+    // 1. 主入口
+    GM_registerMenuCommand("🔑 快照管理助手", () => {
+      if (hostBlocked()) {
+        showBlockedDialog();
+      } else {
+        showMainDialog();
+      }
+    });
+
+    // 2. 切换黑/白名单模式
+    const currentMode = getFilterMode();
+    const modeText = currentMode === "blacklist" ? "🛡️ 当前为【黑名单】模式 (点击切换为白名单)" : "🛡️ 当前为【白名单】模式 (点击切换为黑名单)";
+    GM_registerMenuCommand(modeText, () => {
+      showSwitchFilterModeDialog();
+    });
+
+    // 3. 编辑黑/白名单列表
+    GM_registerMenuCommand("📝 编辑域名规则列表 (黑/白名单)", () => {
+      showEditHostListDialog();
+    });
+
+    // 4. 本地数据加密状态
+    const isEnc = GM_getValue("Config.enable_encryption", true);
+    const encText = isEnc ? "🔒 本地数据【已加密】 (点击切换/关闭)" : "🔓 本地数据【未加密】 (点击切换/开启)";
+    GM_registerMenuCommand(encText, () => {
+      showToggleEncryptionDialog();
+    });
+
+    // 5. 恢复后刷新状态
+    const isAutoReload = GM_getValue("Config.auto_reload_after_restore", false);
+    const reloadText = isAutoReload ? "🔄 恢复后【自动刷新/跳转】 (点击切换为不刷新)" : "⏸️ 恢复后【不默认刷新】 (点击切换为自动刷新)";
+    GM_registerMenuCommand(reloadText, () => {
+      showToggleAutoReloadDialog();
+    });
+  }
+
+  registerAllMenuCommands();
 
   if (hostBlocked()) return;
 
@@ -211,7 +249,81 @@ function disableCurrentHost() {
 }
 const removeHostFromShowList = disableCurrentHost;
 
-// 本站被拦截禁用时的处理：弹窗选择「临时显示」或「永久开启」
+// ---------------------------------------------------------------------------
+// 移动端/全平台弹窗滚动穿透防护助手
+// ---------------------------------------------------------------------------
+function bindScrollLock(mask, scrollableSelector) {
+  let startY = 0;
+
+  // 1. PC 端鼠标滚轮事件精确拦截
+  mask.addEventListener(
+    "wheel",
+    (e) => {
+      e.stopPropagation();
+      const scrollable = scrollableSelector && e.target.closest ? e.target.closest(scrollableSelector) : null;
+      if (!scrollable) {
+        e.preventDefault();
+        return;
+      }
+      const { scrollTop, scrollHeight, clientHeight } = scrollable;
+      const deltaY = e.deltaY;
+      if ((deltaY < 0 && scrollTop <= 0) || (deltaY > 0 && scrollTop + clientHeight >= scrollHeight - 1)) {
+        e.preventDefault();
+      }
+    },
+    { passive: false }
+  );
+
+  // 2. 移动端触摸滑动事件精确拦截
+  mask.addEventListener(
+    "touchstart",
+    (e) => {
+      if (e.touches.length === 1) {
+        startY = e.touches[0].clientY;
+      }
+    },
+    { passive: true }
+  );
+
+  mask.addEventListener(
+    "touchmove",
+    (e) => {
+      if (e.touches.length !== 1) return;
+      const scrollable = scrollableSelector && e.target.closest ? e.target.closest(scrollableSelector) : null;
+      if (!scrollable) {
+        if (e.cancelable) e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+
+      const currentY = e.touches[0].clientY;
+      const deltaY = currentY - startY; // >0 为下拉，<0 为上滑
+      const { scrollTop, scrollHeight, clientHeight } = scrollable;
+
+      if (scrollHeight <= clientHeight) {
+        // 容器内无需滚动时直接阻止穿透
+        if (e.cancelable) e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+
+      if (deltaY > 0 && scrollTop <= 0) {
+        // 顶部继续下拉，拦截
+        if (e.cancelable) e.preventDefault();
+        e.stopPropagation();
+      } else if (deltaY < 0 && scrollTop + clientHeight >= scrollHeight - 1) {
+        // 底部继续上滑，拦截
+        if (e.cancelable) e.preventDefault();
+        e.stopPropagation();
+      } else {
+        // 容器内部正常滚动，允许并阻止冒泡
+        e.stopPropagation();
+      }
+    },
+    { passive: false }
+  );
+}
+
 function ensureHostAnimationStyle() {
   if (!document.getElementById("lsm-host-animations")) {
     const style = document.createElement("style");
@@ -229,7 +341,7 @@ function showBlockedDialog() {
   mask.style.cssText =
     "position:fixed;inset:0;z-index:2147483647;background:rgba(15,23,42,0.55);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);" +
     "display:flex;align-items:center;justify-content:center;overscroll-behavior:contain;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;";
-  mask.addEventListener("wheel", (e) => { e.preventDefault(); e.stopPropagation(); }, { passive: false });
+  bindScrollLock(mask, null);
 
   const box = document.createElement("div");
   box.style.cssText =
@@ -298,7 +410,7 @@ function showMainDialog() {
   mask.style.cssText =
     "position:fixed;inset:0;z-index:2147483647;background:rgba(15,23,42,0.55);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);" +
     "display:flex;align-items:center;justify-content:center;overscroll-behavior:contain;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;";
-  mask.addEventListener("wheel", (e) => { e.preventDefault(); e.stopPropagation(); }, { passive: false });
+  bindScrollLock(mask, null);
 
   const box = document.createElement("div");
   box.style.cssText =
@@ -380,6 +492,299 @@ function showMainDialog() {
   });
 
   box.append(title, desc, openBtn, tmpBtn, permBtn, cancelBtn);
+  mask.appendChild(box);
+  document.documentElement.appendChild(mask);
+}
+
+// ---------------------------------------------------------------------------
+// 菜单命令弹窗：1. 切换黑/白名单模式
+// ---------------------------------------------------------------------------
+function showSwitchFilterModeDialog() {
+  if (document.querySelector(".lsm-dlg-mask")) return;
+  ensureHostAnimationStyle();
+
+  const currentMode = getFilterMode();
+  const targetMode = currentMode === "blacklist" ? "whitelist" : "blacklist";
+  const targetModeLabel = targetMode === "blacklist" ? "黑名单模式" : "白名单模式";
+
+  const mask = document.createElement("div");
+  mask.className = "lsm-dlg-mask";
+  mask.style.cssText =
+    "position:fixed;inset:0;z-index:2147483647;background:rgba(15,23,42,0.55);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);" +
+    "display:flex;align-items:center;justify-content:center;overscroll-behavior:contain;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;";
+  bindScrollLock(mask, null);
+
+  const box = document.createElement("div");
+  box.style.cssText =
+    "width:380px;max-width:calc(100vw - 40px);background:#ffffff;border-radius:16px;" +
+    "padding:24px;box-shadow:0 20px 45px -10px rgba(15,23,42,0.25),0 0 0 1px rgba(15,23,42,0.06);box-sizing:border-box;animation:lsmFadeIn .2s ease-out;";
+
+  const title = document.createElement("div");
+  title.innerHTML = "🛡️ <span style='color:#0f172a;font-size:16px;font-weight:700;'>切换域名过滤模式</span>";
+  title.style.cssText = "margin-bottom:10px;display:flex;align-items:center;gap:6px;";
+
+  const desc = document.createElement("div");
+  desc.innerHTML =
+    `当前模式：<strong style="color:#0f172a;">${currentMode === "blacklist" ? "黑名单模式 (列表中的网站不生效)" : "白名单模式 (仅在列表中生效)"}</strong><br>` +
+    `点击下方按钮将切换为：<strong style="color:#2563eb;">${targetModeLabel}</strong>。<br>` +
+    `<span style="color:#94a3b8;font-size:12px;">切换后将立即生效并刷新当前页面。</span>`;
+  desc.style.cssText = "font-size:13px;color:#64748b;line-height:1.6;margin-bottom:18px;";
+
+  const confirmBtn = document.createElement("button");
+  confirmBtn.textContent = `确认切换为「${targetModeLabel}」`;
+  confirmBtn.style.cssText =
+    "display:block;width:100%;padding:10px 0;margin-bottom:10px;border:none;border-radius:10px;" +
+    "background:linear-gradient(135deg,#3b82f6,#2563eb);color:#ffffff;font-size:13px;cursor:pointer;font-weight:600;box-shadow:0 2px 8px rgba(37,99,235,0.25);";
+
+  const cancelBtn = document.createElement("button");
+  cancelBtn.textContent = "取消";
+  cancelBtn.style.cssText =
+    "display:block;width:100%;padding:10px 0;margin-top:4px;border:none;background:none;" +
+    "color:#94a3b8;font-size:12px;cursor:pointer;";
+
+  const close = () => mask.remove();
+
+  confirmBtn.addEventListener("click", () => {
+    GM_setValue("Config.filter_mode", targetMode);
+    close();
+    location.reload();
+  });
+
+  cancelBtn.addEventListener("click", close);
+  mask.addEventListener("click", (e) => {
+    if (e.target === mask) close();
+  });
+
+  box.append(title, desc, confirmBtn, cancelBtn);
+  mask.appendChild(box);
+  document.documentElement.appendChild(mask);
+}
+
+// ---------------------------------------------------------------------------
+// 菜单命令弹窗：2. 编辑黑/白名单域名列表
+// ---------------------------------------------------------------------------
+function showEditHostListDialog() {
+  if (document.querySelector(".lsm-dlg-mask")) return;
+  ensureHostAnimationStyle();
+
+  let raw = GM_getValue("Config.host_list", null);
+  if (raw === null || raw === undefined) {
+    raw = GM_getValue("Config.show_host", "");
+  }
+
+  const mode = getFilterMode();
+
+  const mask = document.createElement("div");
+  mask.className = "lsm-dlg-mask";
+  mask.style.cssText =
+    "position:fixed;inset:0;z-index:2147483647;background:rgba(15,23,42,0.55);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);" +
+    "display:flex;align-items:center;justify-content:center;overscroll-behavior:contain;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;";
+  bindScrollLock(mask, "textarea");
+
+  const box = document.createElement("div");
+  box.style.cssText =
+    "width:460px;max-width:calc(100vw - 40px);background:#ffffff;border-radius:16px;" +
+    "padding:24px;box-shadow:0 20px 45px -10px rgba(15,23,42,0.25),0 0 0 1px rgba(15,23,42,0.06);box-sizing:border-box;animation:lsmFadeIn .2s ease-out;";
+
+  const title = document.createElement("div");
+  title.innerHTML = "📝 <span style='color:#0f172a;font-size:16px;font-weight:700;'>编辑域名规则列表</span>";
+  title.style.cssText = "margin-bottom:8px;display:flex;align-items:center;gap:6px;";
+
+  const desc = document.createElement("div");
+  desc.innerHTML =
+    `当前生效模式：<strong style="color:#2563eb;">${mode === "blacklist" ? "黑名单模式 (列表中不生效)" : "白名单模式 (仅在列表中生效)"}</strong><br>` +
+    `每行一条规则，支持通配符 <code>*</code>（例：<code>https://*.example.com*</code> 或 <code>*.baidu.com</code>）：`;
+  desc.style.cssText = "font-size:12.5px;color:#64748b;line-height:1.5;margin-bottom:12px;";
+
+  const textarea = document.createElement("textarea");
+  textarea.value = String(raw || "");
+  textarea.placeholder = "*.google.com\nhttps://github.com/*\n*.example.org";
+  textarea.style.cssText =
+    "width:100%;height:160px;box-sizing:border-box;border:1px solid #cbd5e1;border-radius:10px;" +
+    "padding:10px 12px;font-size:13px;line-height:1.5;font-family:Consolas,Monaco,monospace;color:#1e293b;resize:vertical;outline:none;" +
+    "background:#f8fafc;transition:border-color .15s,box-shadow .15s;margin-bottom:16px;";
+  textarea.addEventListener("focus", () => {
+    textarea.style.borderColor = "#3b82f6";
+    textarea.style.boxShadow = "0 0 0 3px rgba(59,130,246,0.15)";
+    textarea.style.background = "#ffffff";
+  });
+  textarea.addEventListener("blur", () => {
+    textarea.style.borderColor = "#cbd5e1";
+    textarea.style.boxShadow = "none";
+    textarea.style.background = "#f8fafc";
+  });
+
+  const btnRow = document.createElement("div");
+  btnRow.style.cssText = "display:flex;gap:10px;justify-content:flex-end;align-items:center;";
+
+  const addCurrBtn = document.createElement("button");
+  addCurrBtn.textContent = "+ 添加当前网站";
+  addCurrBtn.style.cssText =
+    "padding:8px 12px;border:1px solid #e2e8f0;border-radius:8px;background:#f1f5f9;color:#334155;font-size:12px;cursor:pointer;font-weight:500;";
+  addCurrBtn.addEventListener("click", () => {
+    const origin = location.origin;
+    const lines = textarea.value.split("\n").map((s) => s.trim()).filter(Boolean);
+    if (!lines.includes(origin)) {
+      lines.push(origin);
+      textarea.value = lines.join("\n");
+    }
+  });
+
+  const saveBtn = document.createElement("button");
+  saveBtn.textContent = "保存并应用";
+  saveBtn.style.cssText =
+    "padding:8px 18px;border:none;border-radius:8px;background:linear-gradient(135deg,#3b82f6,#2563eb);color:#ffffff;font-size:12.5px;cursor:pointer;font-weight:600;box-shadow:0 2px 8px rgba(37,99,235,0.25);";
+
+  const cancelBtn = document.createElement("button");
+  cancelBtn.textContent = "取消";
+  cancelBtn.style.cssText =
+    "padding:8px 14px;border:none;background:none;color:#94a3b8;font-size:12px;cursor:pointer;";
+
+  const close = () => mask.remove();
+
+  saveBtn.addEventListener("click", () => {
+    const formatted = textarea.value
+      .split("\n")
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .join("\n");
+    GM_setValue("Config.host_list", formatted);
+    close();
+    location.reload();
+  });
+
+  cancelBtn.addEventListener("click", close);
+  mask.addEventListener("click", (e) => {
+    if (e.target === mask) close();
+  });
+
+  btnRow.append(addCurrBtn, cancelBtn, saveBtn);
+  box.append(title, desc, textarea, btnRow);
+  mask.appendChild(box);
+  document.documentElement.appendChild(mask);
+}
+
+// ---------------------------------------------------------------------------
+// 菜单命令弹窗：3. 本地数据加密切换
+// ---------------------------------------------------------------------------
+function showToggleEncryptionDialog() {
+  if (document.querySelector(".lsm-dlg-mask")) return;
+  ensureHostAnimationStyle();
+
+  const isEnc = GM_getValue("Config.enable_encryption", true);
+  const targetEnc = !isEnc;
+
+  const mask = document.createElement("div");
+  mask.className = "lsm-dlg-mask";
+  mask.style.cssText =
+    "position:fixed;inset:0;z-index:2147483647;background:rgba(15,23,42,0.55);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);" +
+    "display:flex;align-items:center;justify-content:center;overscroll-behavior:contain;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;";
+  bindScrollLock(mask, null);
+
+  const box = document.createElement("div");
+  box.style.cssText =
+    "width:380px;max-width:calc(100vw - 40px);background:#ffffff;border-radius:16px;" +
+    "padding:24px;box-shadow:0 20px 45px -10px rgba(15,23,42,0.25),0 0 0 1px rgba(15,23,42,0.06);box-sizing:border-box;animation:lsmFadeIn .2s ease-out;";
+
+  const title = document.createElement("div");
+  title.innerHTML = "🔒 <span style='color:#0f172a;font-size:16px;font-weight:700;'>本地数据加密设置</span>";
+  title.style.cssText = "margin-bottom:10px;display:flex;align-items:center;gap:6px;";
+
+  const desc = document.createElement("div");
+  desc.innerHTML =
+    `当前状态：<strong style="color:${isEnc ? "#16a34a" : "#e11d48"};">${isEnc ? "已开启 AES-GCM 256 位加密" : "未开启（明文存储）"}</strong><br>` +
+    `点击确认将切换为：<strong style="color:#2563eb;">${targetEnc ? "开启本地数据加密" : "关闭本地数据加密"}</strong>。<br>` +
+    `<span style="color:#94a3b8;font-size:12px;">（新保存的快照将按新设置执行，已保存的旧快照依然支持正常读取）</span>`;
+  desc.style.cssText = "font-size:13px;color:#64748b;line-height:1.6;margin-bottom:18px;";
+
+  const confirmBtn = document.createElement("button");
+  confirmBtn.textContent = targetEnc ? "确认开启加密" : "确认关闭加密";
+  confirmBtn.style.cssText =
+    `display:block;width:100%;padding:10px 0;margin-bottom:10px;border:none;border-radius:10px;` +
+    `background:${targetEnc ? "linear-gradient(135deg,#3b82f6,#2563eb)" : "linear-gradient(135deg,#e11d48,#be123c)"};color:#ffffff;font-size:13px;cursor:pointer;font-weight:600;box-shadow:0 2px 8px rgba(0,0,0,0.15);`;
+
+  const cancelBtn = document.createElement("button");
+  cancelBtn.textContent = "取消";
+  cancelBtn.style.cssText =
+    "display:block;width:100%;padding:10px 0;margin-top:4px;border:none;background:none;" +
+    "color:#94a3b8;font-size:12px;cursor:pointer;";
+
+  const close = () => mask.remove();
+
+  confirmBtn.addEventListener("click", () => {
+    GM_setValue("Config.enable_encryption", targetEnc);
+    close();
+    location.reload();
+  });
+
+  cancelBtn.addEventListener("click", close);
+  mask.addEventListener("click", (e) => {
+    if (e.target === mask) close();
+  });
+
+  box.append(title, desc, confirmBtn, cancelBtn);
+  mask.appendChild(box);
+  document.documentElement.appendChild(mask);
+}
+
+// ---------------------------------------------------------------------------
+// 菜单命令弹窗：4. 恢复后刷新/跳转状态切换
+// ---------------------------------------------------------------------------
+function showToggleAutoReloadDialog() {
+  if (document.querySelector(".lsm-dlg-mask")) return;
+  ensureHostAnimationStyle();
+
+  const isAutoReload = GM_getValue("Config.auto_reload_after_restore", false);
+  const targetState = !isAutoReload;
+
+  const mask = document.createElement("div");
+  mask.className = "lsm-dlg-mask";
+  mask.style.cssText =
+    "position:fixed;inset:0;z-index:2147483647;background:rgba(15,23,42,0.55);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);" +
+    "display:flex;align-items:center;justify-content:center;overscroll-behavior:contain;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;";
+  bindScrollLock(mask, null);
+
+  const box = document.createElement("div");
+  box.style.cssText =
+    "width:380px;max-width:calc(100vw - 40px);background:#ffffff;border-radius:16px;" +
+    "padding:24px;box-shadow:0 20px 45px -10px rgba(15,23,42,0.25),0 0 0 1px rgba(15,23,42,0.06);box-sizing:border-box;animation:lsmFadeIn .2s ease-out;";
+
+  const title = document.createElement("div");
+  title.innerHTML = "🔄 <span style='color:#0f172a;font-size:16px;font-weight:700;'>恢复后自动刷新设置</span>";
+  title.style.cssText = "margin-bottom:10px;display:flex;align-items:center;gap:6px;";
+
+  const desc = document.createElement("div");
+  desc.innerHTML =
+    `当前状态：<strong style="color:${isAutoReload ? "#16a34a" : "#64748b"};">${isAutoReload ? "已开启自动刷新/跳转（无需二次弹窗确认）" : "不默认刷新（恢复后弹窗提示是否刷新）"}</strong><br>` +
+    `点击确认将切换为：<strong style="color:#2563eb;">${targetState ? "恢复后直接自动刷新/跳转" : "恢复后二次弹窗确认刷新"}</strong>。`;
+  desc.style.cssText = "font-size:13px;color:#64748b;line-height:1.6;margin-bottom:18px;";
+
+  const confirmBtn = document.createElement("button");
+  confirmBtn.textContent = targetState ? "确认切换为「自动刷新/跳转」" : "确认切换为「不默认刷新」";
+  confirmBtn.style.cssText =
+    "display:block;width:100%;padding:10px 0;margin-bottom:10px;border:none;border-radius:10px;" +
+    "background:linear-gradient(135deg,#3b82f6,#2563eb);color:#ffffff;font-size:13px;cursor:pointer;font-weight:600;box-shadow:0 2px 8px rgba(37,99,235,0.25);";
+
+  const cancelBtn = document.createElement("button");
+  cancelBtn.textContent = "取消";
+  cancelBtn.style.cssText =
+    "display:block;width:100%;padding:10px 0;margin-top:4px;border:none;background:none;" +
+    "color:#94a3b8;font-size:12px;cursor:pointer;";
+
+  const close = () => mask.remove();
+
+  confirmBtn.addEventListener("click", () => {
+    GM_setValue("Config.auto_reload_after_restore", targetState);
+    close();
+    location.reload();
+  });
+
+  cancelBtn.addEventListener("click", close);
+  mask.addEventListener("click", (e) => {
+    if (e.target === mask) close();
+  });
+
+  box.append(title, desc, confirmBtn, cancelBtn);
   mask.appendChild(box);
   document.documentElement.appendChild(mask);
 }
@@ -1233,6 +1638,7 @@ async function initApp() {
       flex-direction: column;
       box-shadow: 0 25px 50px -12px rgba(15, 23, 42, 0.25), 0 0 0 1px rgba(15, 23, 42, 0.08);
       overscroll-behavior: contain;
+      touch-action: none;
     }
     #${uid}-window.hidden, #${uid}-ball.hidden {
       display: none !important;
@@ -1621,6 +2027,8 @@ async function initApp() {
       min-height: 0;
       background: #f8fafc;
       overscroll-behavior: contain;
+      -webkit-overflow-scrolling: touch;
+      touch-action: pan-y;
     }
     .${uid}-card {
       background: #ffffff;
@@ -1781,6 +2189,8 @@ async function initApp() {
       z-index: 10;
       overscroll-behavior: contain;
       overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      touch-action: pan-y;
     }
     .${uid}-save-dialog.open {
       transform: translateY(0);
@@ -2130,7 +2540,7 @@ async function initApp() {
   }
 
   // -----------------------------------------------------------------------
-  // 拖拽逻辑
+  // 拖拽逻辑（兼容鼠标与移动端触摸）
   // -----------------------------------------------------------------------
   function makeDraggable(el, handle, onClick) {
     let dragging = false,
@@ -2140,28 +2550,28 @@ async function initApp() {
       sLeft,
       sTop;
 
-    handle.addEventListener("mousedown", (e) => {
-      const tag = e.target.tagName;
-      if (["BUTTON", "SELECT", "TEXTAREA", "INPUT"].includes(tag)) return;
-      if (e.target.closest && e.target.closest(`.${uid}-ball-close`)) return;
+    const onStart = (clientX, clientY, target) => {
+      const tag = target.tagName;
+      if (["BUTTON", "SELECT", "TEXTAREA", "INPUT"].includes(tag)) return false;
+      if (target.closest && target.closest(`.${uid}-ball-close`)) return false;
 
       dragging = true;
       moved = false;
       const rect = el.getBoundingClientRect();
-      sx = e.clientX;
-      sy = e.clientY;
+      sx = clientX;
+      sy = clientY;
       sLeft = rect.left;
       sTop = rect.top;
       handle.classList.add("dragging");
-      e.preventDefault();
-    });
+      return true;
+    };
 
-    document.addEventListener("mousemove", (e) => {
-      if (!dragging) return;
-      const dx = e.clientX - sx,
-        dy = e.clientY - sy;
+    const onMove = (clientX, clientY) => {
+      if (!dragging) return false;
+      const dx = clientX - sx,
+        dy = clientY - sy;
       if (Math.abs(dx) > 3 || Math.abs(dy) > 3) moved = true;
-      if (!moved) return;
+      if (!moved) return false;
 
       let nl = Math.max(0, Math.min(sLeft + dx, window.innerWidth - el.offsetWidth));
       let nt = Math.max(0, Math.min(sTop + dy, window.innerHeight - el.offsetHeight));
@@ -2169,9 +2579,10 @@ async function initApp() {
       el.style.top = nt + "px";
       el.style.right = "auto";
       el.style.bottom = "auto";
-    });
+      return true;
+    };
 
-    document.addEventListener("mouseup", () => {
+    const onEnd = () => {
       if (!dragging) return;
       dragging = false;
       handle.classList.remove("dragging");
@@ -2192,6 +2603,56 @@ async function initApp() {
         }
       }
       if (!moved && onClick) onClick();
+    };
+
+    // 鼠标事件
+    handle.addEventListener("mousedown", (e) => {
+      if (onStart(e.clientX, e.clientY, e.target)) {
+        e.preventDefault();
+      }
+    });
+
+    document.addEventListener("mousemove", (e) => {
+      onMove(e.clientX, e.clientY);
+    });
+
+    document.addEventListener("mouseup", () => {
+      onEnd();
+    });
+
+    // 触摸事件 (移动端)
+    handle.addEventListener(
+      "touchstart",
+      (e) => {
+        if (e.touches.length === 1) {
+          const t = e.touches[0];
+          if (onStart(t.clientX, t.clientY, e.target)) {
+            // 记录触摸启动，避免同时触发默认手势
+          }
+        }
+      },
+      { passive: true }
+    );
+
+    document.addEventListener(
+      "touchmove",
+      (e) => {
+        if (dragging && e.touches.length === 1) {
+          const t = e.touches[0];
+          if (onMove(t.clientX, t.clientY)) {
+            if (e.cancelable) e.preventDefault();
+            e.stopPropagation();
+          }
+        }
+      },
+      { passive: false }
+    );
+
+    document.addEventListener("touchend", () => {
+      onEnd();
+    });
+    document.addEventListener("touchcancel", () => {
+      onEnd();
     });
   }
 
@@ -2527,37 +2988,9 @@ async function initApp() {
   makeDraggable(ball, ball, () => openWindow());
   makeDraggable(win, header);
 
-  // 阻止弹窗内滚动穿透到宿主网页
-  win.addEventListener(
-    "wheel",
-    (e) => {
-      e.stopPropagation();
-      const scrollable = e.target.closest(`.${uid}-content, .${uid}-save-dialog`);
-      if (!scrollable) {
-        e.preventDefault();
-        return;
-      }
-      const { scrollTop, scrollHeight, clientHeight } = scrollable;
-      const deltaY = e.deltaY;
-      const isUp = deltaY < 0;
-      const isDown = deltaY > 0;
-      if (isUp && scrollTop <= 0) {
-        e.preventDefault();
-      } else if (isDown && scrollTop + clientHeight >= scrollHeight - 1) {
-        e.preventDefault();
-      }
-    },
-    { passive: false }
-  );
-
-  menuMask.addEventListener(
-    "wheel",
-    (e) => {
-      e.stopPropagation();
-      e.preventDefault();
-    },
-    { passive: false }
-  );
+  // 阻止管理窗口与抽屉弹窗内滚动穿透到宿主网页（PC 滚轮 + 移动端触摸双重拦截）
+  bindScrollLock(win, `.${uid}-content, .${uid}-save-dialog`);
+  bindScrollLock(menuMask, null);
 
   // 悬浮球右上角菜单
   shadow.querySelector(`.${uid}-ball-close`).addEventListener("click", (e) => {
