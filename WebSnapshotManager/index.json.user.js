@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         网站快照存储与恢复助手
 // @namespace    https://github.com/moyefu/BrowserScript/WebSnapshotManager
-// @version      1.1.6
-// @description  针对指定网站实现快照（Cookie、LocalStorage、SessionStorage）的一键存储、命名、加密备份与一键恢复
+// @version      1.2.0
+// @description  针对指定网站实现快照（Cookie、LocalStorage、SessionStorage）的一键存储、命名、加密备份、二维码生成/扫码与一键恢复
 // @author       MOYEFU
 // @icon         https://pic1.imgdb.cn/i/034D4F8VwYLLoU73kkQs3l.gif
 // @homepage     https://scriptcat.org/zh-CN/script-show-page/7633
@@ -16,6 +16,8 @@
 // @grant        GM_registerMenuCommand
 // @grant        GM_cookie
 // @grant        GM_setClipboard
+// @require      https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js
+// @require      https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js
 // @tag          MOYEFU
 // @run-at       document-idle
 // @noframes
@@ -40,7 +42,7 @@ Config:
     title: 本地数据加密
     description: 启用 AES-GCM 256 位本地数据加密存储
     type: checkbox
-    default: true
+    default: false
   auto_reload_after_restore:
     title: 恢复后直接刷新/跳转
     description: 恢复快照成功后直接刷新或跳转至来源页面（不再弹窗确认）
@@ -810,21 +812,30 @@ async function initApp() {
   const CryptoEngine = {
     keyCache: new Map(),
 
-    async getDerivedKey(saltString, domain, useLegacy = false) {
-      const host = domain || location.hostname;
+    // 安全派生密钥：支持 v3（跨设备强通用密钥）、v2（域名绑定密钥）、legacy（UA 绑定历史密钥）
+    async getDerivedKey(saltString, domain, version = "v3") {
+      const host = (domain || location.hostname || "").trim().toLowerCase();
       const salt = saltString || "SESSION_MGR_SALT_2026";
-      const cacheKey = `${host}___${salt}___${useLegacy ? "legacy" : "v2"}`;
+      const cacheKey = `${host}___${salt}___${version}`;
 
       if (this.keyCache.has(cacheKey)) {
         return this.keyCache.get(cacheKey);
       }
 
       const enc = new TextEncoder();
-      // v2: 采用解耦 UA 的稳定派生材料，支持跨设备与跨浏览器无缝导入解密
-      // legacy: 兼容旧版本保存的历史快照数据
-      const baseKeyMaterial = useLegacy
-        ? `LSM_KEY_${navigator.userAgent.slice(0, 32)}_${host}`
-        : `LSM_KEY_V2_SNAPSHOT_${host}`;
+      let baseKeyMaterial = "";
+
+      if (version === "v3") {
+        // v3: 全局稳定密钥材料，彻底消除跨设备、跨浏览器、二级域名或跨站点恢复时的环境不一致问题
+        baseKeyMaterial = "LSM_STABLE_UNIVERSAL_KEY_MATERIAL_2026_SECURE";
+      } else if (version === "v2") {
+        // v2: 基于主域名的派生密钥材料
+        baseKeyMaterial = `LSM_KEY_V2_SNAPSHOT_${host}`;
+      } else {
+        // legacy: 兼容旧版本保存的历史快照数据 (含 UA 前缀)
+        baseKeyMaterial = `LSM_KEY_${navigator.userAgent.slice(0, 32)}_${host}`;
+      }
+
       const keyMaterial = await crypto.subtle.importKey(
         "raw",
         enc.encode(baseKeyMaterial),
@@ -856,7 +867,8 @@ async function initApp() {
       }
       try {
         const iv = crypto.getRandomValues(new Uint8Array(12));
-        const key = await this.getDerivedKey("SESSION_SALT_GCM", domain, false);
+        // 默认使用 v3 跨设备强通用稳定密钥加密
+        const key = await this.getDerivedKey("SESSION_SALT_GCM", domain, "v3");
         const encodedData = new TextEncoder().encode(JSON.stringify(plainObject));
 
         const cipherBuffer = await crypto.subtle.encrypt(
@@ -870,6 +882,7 @@ async function initApp() {
 
         return {
           encrypted: true,
+          v: "3", // 标注密钥协议版本
           iv: ivBase64,
           payload: cipherBase64
         };
@@ -898,9 +911,9 @@ async function initApp() {
             .map((c) => c.charCodeAt(0))
         );
 
-        const tryDecryptWithKey = async (targetDomain, isLegacy) => {
+        const tryDecryptWithKey = async (targetDomain, version) => {
           try {
-            const key = await this.getDerivedKey("SESSION_SALT_GCM", targetDomain, isLegacy);
+            const key = await this.getDerivedKey("SESSION_SALT_GCM", targetDomain, version);
             const decryptedBuffer = await crypto.subtle.decrypt(
               { name: "AES-GCM", iv: iv },
               key,
@@ -913,28 +926,36 @@ async function initApp() {
           }
         };
 
-        // 尝试顺序：
-        // 1. 新版 v2 密钥 (指定 domain)
-        // 2. 新版 v2 密钥 (当前 location.hostname)
-        // 3. 旧版 legacy 密钥 (向下兼容升级前已保存快照)
-        // 4. 旧版 legacy 密钥 (当前 location.hostname)
-        let res = await tryDecryptWithKey(domain, false);
+        // 智能自适应多级回退解密管道：
+        // 1. 优先尝试 v3 跨设备强通用密钥 (零环境依赖)
+        let res = await tryDecryptWithKey("", "v3");
         if (res) return res;
 
-        if (domain && domain !== location.hostname) {
-          res = await tryDecryptWithKey(location.hostname, false);
+        // 2. 尝试 v2 密钥 (快照原始 domain)
+        if (domain) {
+          res = await tryDecryptWithKey(domain, "v2");
           if (res) return res;
         }
 
-        res = await tryDecryptWithKey(domain, true);
-        if (res) return res;
-
-        if (domain && domain !== location.hostname) {
-          res = await tryDecryptWithKey(location.hostname, true);
+        // 3. 尝试 v2 密钥 (当前页面 location.hostname)
+        if (location.hostname && location.hostname !== domain) {
+          res = await tryDecryptWithKey(location.hostname, "v2");
           if (res) return res;
         }
 
-        throw new Error("数据解密失败，可能是环境变更或跨设备密钥不匹配");
+        // 4. 尝试 legacy 密钥 (快照原始 domain)
+        if (domain) {
+          res = await tryDecryptWithKey(domain, "legacy");
+          if (res) return res;
+        }
+
+        // 5. 尝试 legacy 密钥 (当前 location.hostname)
+        if (location.hostname && location.hostname !== domain) {
+          res = await tryDecryptWithKey(location.hostname, "legacy");
+          if (res) return res;
+        }
+
+        throw new Error("数据解密失败，快照可能损坏或加密密钥不匹配");
       } catch (err) {
         console.error("[LSM] 解密失败:", err);
         throw err instanceof Error ? err : new Error("数据解密失败");
@@ -1404,6 +1425,22 @@ async function initApp() {
       }, 100);
     } catch (e) {
       alert("下载文件失败: " + e.message);
+    }
+  }
+
+  function downloadCanvasAsImage(canvas, filename) {
+    try {
+      const url = canvas.toDataURL("image/png");
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => {
+        document.body.removeChild(a);
+      }, 100);
+    } catch (e) {
+      alert("下载图片失败: " + e.message);
     }
   }
 
@@ -2250,6 +2287,247 @@ async function initApp() {
       color: #64748b;
     }
 
+    /* 快照二维码展示抽屉弹窗 */
+    .${uid}-qr-dialog {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: #ffffff;
+      display: flex;
+      flex-direction: column;
+      padding: 20px;
+      gap: 12px;
+      transform: translateY(100%);
+      transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+      z-index: 12;
+      overscroll-behavior: contain;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      touch-action: pan-y;
+    }
+    .${uid}-qr-dialog.open {
+      transform: translateY(0);
+    }
+    .${uid}-qr-box {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+    }
+    .${uid}-qr-canvas-wrap {
+      background: #ffffff;
+      padding: 10px;
+      border-radius: 12px;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08), 0 0 0 1px rgba(0,0,0,0.04);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      max-width: 100%;
+    }
+    .${uid}-qr-canvas-wrap canvas {
+      max-width: 100%;
+      height: auto !important;
+      display: block;
+      border-radius: 6px;
+    }
+
+    /* 扫码与综合导入抽屉弹窗 */
+    .${uid}-scan-dialog {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: #ffffff;
+      display: flex;
+      flex-direction: column;
+      padding: 20px;
+      gap: 14px;
+      transform: translateY(100%);
+      transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+      z-index: 12;
+      overscroll-behavior: contain;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      touch-action: pan-y;
+    }
+    .${uid}-scan-dialog.open {
+      transform: translateY(0);
+    }
+    .${uid}-dialog-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid #f1f5f9;
+      padding-bottom: 10px;
+    }
+    .${uid}-dialog-title {
+      font-size: 15px;
+      font-weight: 700;
+      color: #0f172a;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .${uid}-dialog-close {
+      background: none;
+      border: none;
+      font-size: 18px;
+      line-height: 1;
+      color: #94a3b8;
+      cursor: pointer;
+      padding: 4px;
+      border-radius: 6px;
+      transition: color 0.15s ease, background 0.15s ease;
+    }
+    .${uid}-dialog-close:hover {
+      color: #0f172a;
+      background: #f1f5f9;
+    }
+
+    /* 摄像头扫码视口与取景框 */
+    .${uid}-camera-viewport {
+      position: relative;
+      width: 100%;
+      height: 220px;
+      background: #090d16;
+      border-radius: 12px;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.15) inset;
+    }
+    .${uid}-camera-video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+    .${uid}-camera-placeholder {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      color: #94a3b8;
+      gap: 8px;
+      padding: 20px;
+      text-align: center;
+      font-size: 12px;
+      background: rgba(15, 23, 42, 0.92);
+      z-index: 2;
+    }
+    .${uid}-scan-frame {
+      position: absolute;
+      width: 170px;
+      height: 170px;
+      border: 2px solid rgba(59, 130, 246, 0.7);
+      border-radius: 12px;
+      box-shadow: 0 0 0 9999px rgba(15, 23, 42, 0.45);
+      z-index: 3;
+      pointer-events: none;
+    }
+    .${uid}-scan-corner {
+      position: absolute;
+      width: 16px;
+      height: 16px;
+      border-color: #38bdf8;
+      border-style: solid;
+    }
+    .${uid}-scan-corner-tl { top: -2px; left: -2px; border-width: 3px 0 0 3px; border-top-left-radius: 8px; }
+    .${uid}-scan-corner-tr { top: -2px; right: -2px; border-width: 3px 3px 0 0; border-top-right-radius: 8px; }
+    .${uid}-scan-corner-bl { bottom: -2px; left: -2px; border-width: 0 0 3px 3px; border-bottom-left-radius: 8px; }
+    .${uid}-scan-corner-br { bottom: -2px; right: -2px; border-width: 0 3px 3px 0; border-bottom-right-radius: 8px; }
+
+    .${uid}-scan-laser {
+      position: absolute;
+      left: 6px;
+      right: 6px;
+      height: 2px;
+      background: linear-gradient(90deg, rgba(56,189,248,0) 0%, #38bdf8 50%, rgba(56,189,248,0) 100%);
+      box-shadow: 0 0 10px #38bdf8, 0 0 4px #0284c7;
+      animation: ${uid}-laser-anim 2s infinite ease-in-out;
+      z-index: 4;
+      pointer-events: none;
+    }
+    @keyframes ${uid}-laser-anim {
+      0% { top: 8px; opacity: 0.8; }
+      50% { top: calc(100% - 10px); opacity: 1; }
+      100% { top: 8px; opacity: 0.8; }
+    }
+
+    /* 导入上传选择区 */
+    .${uid}-import-options {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+    .${uid}-dropzone-btn {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 12px 8px;
+      background: #f8fafc;
+      border: 1px dashed #cbd5e1;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      color: #334155;
+      gap: 6px;
+      text-align: center;
+    }
+    .${uid}-dropzone-btn:hover {
+      background: #f1f5f9;
+      border-color: #3b82f6;
+      color: #1d4ed8;
+    }
+    .${uid}-dropzone-label {
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .${uid}-dropzone-hint {
+      font-size: 10px;
+      color: #94a3b8;
+    }
+
+    /* 识别成功结果展示卡片 */
+    .${uid}-result-card {
+      background: #f0fdf4;
+      border: 1px solid #bbf7d0;
+      border-radius: 12px;
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .${uid}-result-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: #166534;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .${uid}-result-domain-warn {
+      background: #fffbeb;
+      border: 1px solid #fde68a;
+      border-radius: 8px;
+      padding: 8px 10px;
+      font-size: 11px;
+      color: #b45309;
+      line-height: 1.5;
+    }
+
     /* Toast 提示 */
     .${uid}-toast {
       position: fixed;
@@ -2342,7 +2620,7 @@ async function initApp() {
       <!-- 操作工具栏 -->
       <div class="${uid}-toolbar">
         <div class="${uid}-toolbar-row">
-          <button class="${uid}-btn ${uid}-btn-primary" id="${uid}-btn-save-current" style="flex: 1;" title="一键保存当前快照">
+          <button class="${uid}-btn ${uid}-btn-primary" id="${uid}-btn-save-current" style="flex: 1.1;" title="一键保存当前快照">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
               <polyline points="17 21 17 13 7 13 7 21"></polyline>
@@ -2350,12 +2628,18 @@ async function initApp() {
             </svg>
             <span>一键保存</span>
           </button>
+          <button class="${uid}-btn ${uid}-btn-secondary" id="${uid}-btn-open-scan" title="扫码或导入快照数据">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M4 7V4h3M20 7V4h-3M4 17v3h3M20 17v3h-3M9 9h6v6H9z"></path>
+            </svg>
+            <span>扫码/导入</span>
+          </button>
           <button class="${uid}-btn ${uid}-btn-danger" id="${uid}-btn-clear-current" title="清空当前网站所有Cookie及Storage数据">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <polyline points="3 6 5 6 21 6"></polyline>
               <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
             </svg>
-            <span>清空数据</span>
+            <span>清空</span>
           </button>
           <button class="${uid}-btn ${uid}-btn-secondary" id="${uid}-btn-reload" title="刷新页面以生效">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -2374,6 +2658,13 @@ async function initApp() {
               </svg>
             </button>
             <div class="${uid}-dropdown-menu hidden" id="${uid}-dropdown-menu">
+              <div class="${uid}-dropdown-item ${uid}-item-accent" id="${uid}-btn-menu-scan">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M4 7V4h3M20 7V4h-3M4 17v3h3M20 17v3h-3M9 9h6v6H9z"></path>
+                </svg>
+                <span>扫码与快照导入</span>
+              </div>
+              <div class="${uid}-dropdown-divider"></div>
               <div class="${uid}-dropdown-item" id="${uid}-btn-export-all">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
@@ -2391,7 +2682,7 @@ async function initApp() {
                 <span>批量导入记录</span>
               </div>
               <div class="${uid}-dropdown-divider"></div>
-              <div class="${uid}-dropdown-item ${uid}-item-accent" id="${uid}-btn-restore-file">
+              <div class="${uid}-dropdown-item" id="${uid}-btn-restore-file">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
                   <polyline points="14 2 14 8 20 8"></polyline>
@@ -2423,6 +2714,9 @@ async function initApp() {
       <!-- 隐藏的文件选择器 -->
       <input type="file" id="${uid}-file-import" accept=".json" style="display: none;" />
       <input type="file" id="${uid}-file-restore-direct" accept=".json" style="display: none;" />
+      <input type="file" id="${uid}-file-scan-image" accept="image/*" style="display: none;" />
+      <input type="file" id="${uid}-file-scan-json" accept=".json" style="display: none;" />
+      <canvas id="${uid}-scan-hidden-canvas" style="display: none;"></canvas>
 
       <!-- 列表区 -->
       <div class="${uid}-content" id="${uid}-list"></div>
@@ -2452,6 +2746,162 @@ async function initApp() {
           <button class="${uid}-btn ${uid}-btn-primary" id="${uid}-btn-confirm-save">确认加密保存</button>
         </div>
       </div>
+
+      <!-- 快照二维码展示抽屉对话框 -->
+      <div class="${uid}-qr-dialog" id="${uid}-qr-dialog">
+        <div class="${uid}-dialog-header">
+          <div class="${uid}-dialog-title">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2">
+              <rect x="3" y="3" width="7" height="7"></rect>
+              <rect x="14" y="3" width="7" height="7"></rect>
+              <rect x="14" y="14" width="7" height="7"></rect>
+              <rect x="3" y="14" width="7" height="7"></rect>
+            </svg>
+            <span>快照二维码</span>
+          </div>
+          <button class="${uid}-dialog-close" id="${uid}-btn-close-qr" title="关闭">✕</button>
+        </div>
+        <div class="${uid}-qr-box">
+          <div id="${uid}-qr-rec-info" style="font-size: 12px; color: #334155; text-align: center; line-height: 1.5; word-break: break-all; width: 100%;">
+            <strong id="${uid}-qr-rec-name" style="font-size: 14px; color: #0f172a;">快照名称</strong>
+            <div id="${uid}-qr-rec-meta" style="font-size: 11px; color: #64748b; margin-top: 2px;"></div>
+          </div>
+          <div class="${uid}-qr-canvas-wrap">
+            <canvas id="${uid}-qr-canvas"></canvas>
+          </div>
+          <div id="${uid}-qr-tip" style="font-size: 11px; color: #64748b; text-align: center;">
+            使用另一台设备或快照助手的「扫码」功能即可一键导入与恢复
+          </div>
+        </div>
+        <div style="margin-top: auto; display: flex; flex-direction: column; gap: 8px;">
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+            <button class="${uid}-btn ${uid}-btn-secondary" id="${uid}-btn-download-qr" title="下载二维码 PNG 图片">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                <polyline points="7 10 12 15 17 10"></polyline>
+                <line x1="12" y1="15" x2="12" y2="3"></line>
+              </svg>
+              <span>下载图片</span>
+            </button>
+            <button class="${uid}-btn ${uid}-btn-secondary" id="${uid}-btn-copy-qr-data" title="复制完整快照 JSON 数据">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+              </svg>
+              <span>复制数据</span>
+            </button>
+          </div>
+          <button class="${uid}-btn ${uid}-btn-secondary" id="${uid}-btn-close-qr-bottom" style="width: 100%;">返回管理列表</button>
+        </div>
+      </div>
+
+      <!-- 扫码与综合导入抽屉对话框 -->
+      <div class="${uid}-scan-dialog" id="${uid}-scan-dialog">
+        <div class="${uid}-dialog-header">
+          <div class="${uid}-dialog-title">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2">
+              <path d="M4 7V4h3M20 7V4h-3M4 17v3h3M20 17v3h-3M9 9h6v6H9z"></path>
+            </svg>
+            <span id="${uid}-scan-dialog-title-text">扫码与快照导入</span>
+          </div>
+          <button class="${uid}-dialog-close" id="${uid}-btn-close-scan" title="关闭">✕</button>
+        </div>
+
+        <!-- 视图 1：扫码/识别/选择主视图 -->
+        <div id="${uid}-scan-view-main" style="display: flex; flex-direction: column; gap: 12px; height: 100%;">
+          <!-- 摄像头视口 -->
+          <div class="${uid}-camera-viewport" id="${uid}-camera-viewport">
+            <video class="${uid}-camera-video" id="${uid}-camera-video" playsinline muted autoplay></video>
+            <div class="${uid}-scan-frame" id="${uid}-scan-frame" style="display: none;">
+              <span class="${uid}-scan-corner ${uid}-scan-corner-tl"></span>
+              <span class="${uid}-scan-corner ${uid}-scan-corner-tr"></span>
+              <span class="${uid}-scan-corner ${uid}-scan-corner-bl"></span>
+              <span class="${uid}-scan-corner ${uid}-scan-corner-br"></span>
+              <div class="${uid}-scan-laser"></div>
+            </div>
+            <div class="${uid}-camera-placeholder" id="${uid}-camera-placeholder">
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="1.5">
+                <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
+                <circle cx="12" cy="13" r="4"></circle>
+              </svg>
+              <div id="${uid}-camera-status-text">未开启摄像头实时扫码</div>
+              <button class="${uid}-btn ${uid}-btn-primary ${uid}-btn-sm" id="${uid}-btn-start-camera" style="margin-top: 4px;">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
+                  <circle cx="12" cy="13" r="4"></circle>
+                </svg>
+                <span>开启摄像头扫码</span>
+              </button>
+            </div>
+          </div>
+
+          <div style="font-size: 11px; color: #64748b; text-align: center;">或通过以下方式快速导入/恢复快照：</div>
+
+          <!-- 备选方式：图片识别二维码 与 JSON 文件导入 -->
+          <div class="${uid}-import-options">
+            <div class="${uid}-dropzone-btn" id="${uid}-btn-choose-img" title="上传带有二维码的截图或图片进行解析">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="1.8">
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                <circle cx="8.5" cy="8.5" r="1.5"></circle>
+                <polyline points="21 15 16 10 5 21"></polyline>
+              </svg>
+              <div class="${uid}-dropzone-label">图片识别二维码</div>
+              <div class="${uid}-dropzone-hint">选择或拖入二维码截图</div>
+            </div>
+
+            <div class="${uid}-dropzone-btn" id="${uid}-btn-choose-json" title="直接导入 .json 快照文件">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#059669" stroke-width="1.8">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                <polyline points="14 2 14 8 20 8"></polyline>
+                <line x1="16" y1="13" x2="8" y2="13"></line>
+                <line x1="16" y1="17" x2="8" y2="17"></line>
+              </svg>
+              <div class="${uid}-dropzone-label">JSON 文件导入</div>
+              <div class="${uid}-dropzone-hint">单条或批量备份文件</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 视图 2：解析成功结果展示与操作 -->
+        <div id="${uid}-scan-view-result" style="display: none; flex-direction: column; gap: 12px; height: 100%;">
+          <div class="${uid}-result-card">
+            <div class="${uid}-result-title">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="2.5">
+                <polyline points="20 6 9 17 4 12"></polyline>
+              </svg>
+              <span>快照凭据解析成功</span>
+            </div>
+            <div style="font-size: 13px; font-weight: 700; color: #0f172a;" id="${uid}-res-name">-</div>
+            <div style="font-size: 11px; color: #475569; display: flex; flex-wrap: wrap; gap: 6px;" id="${uid}-res-chips"></div>
+            <div style="font-size: 11px; color: #64748b;" id="${uid}-res-meta"></div>
+          </div>
+
+          <div id="${uid}-res-domain-warning" class="${uid}-result-domain-warn" style="display: none;"></div>
+
+          <div style="margin-top: auto; display: flex; flex-direction: column; gap: 8px;">
+            <button class="${uid}-btn ${uid}-btn-primary" id="${uid}-btn-scan-restore-now" style="width: 100%; padding: 11px 0; font-size: 13px;">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path>
+                <path d="M21 3v5h-5"></path>
+                <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path>
+                <path d="M8 16H3v5"></path>
+              </svg>
+              <span>🚀 立即解密并恢复当前页面</span>
+            </button>
+            <button class="${uid}-btn ${uid}-btn-secondary" id="${uid}-btn-scan-save-db" style="width: 100%; padding: 10px 0; font-size: 13px;">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+                <polyline points="17 21 17 13 7 13 7 21"></polyline>
+                <polyline points="7 3 7 8 15 8"></polyline>
+              </svg>
+              <span>📥 导入并保存到快照列表</span>
+            </button>
+            <button class="${uid}-btn ${uid}-btn-secondary" id="${uid}-btn-scan-retry" style="width: 100%;">
+              <span>🔄 重新扫码 / 选择其他</span>
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- Toast -->
@@ -2472,6 +2922,39 @@ async function initApp() {
   const inputName = shadow.getElementById(`${uid}-input-name`);
   const previewBox = shadow.getElementById(`${uid}-preview-box`);
   const toastEl = shadow.getElementById(`${uid}-toast`);
+
+  // 二维码展示抽屉相关元素
+  const qrDialog = shadow.getElementById(`${uid}-qr-dialog`);
+  const qrRecName = shadow.getElementById(`${uid}-qr-rec-name`);
+  const qrRecMeta = shadow.getElementById(`${uid}-qr-rec-meta`);
+  const qrCanvas = shadow.getElementById(`${uid}-qr-canvas`);
+  const btnDownloadQr = shadow.getElementById(`${uid}-btn-download-qr`);
+  const btnCopyQrData = shadow.getElementById(`${uid}-btn-copy-qr-data`);
+  const btnCloseQr = shadow.getElementById(`${uid}-btn-close-qr`);
+  const btnCloseQrBottom = shadow.getElementById(`${uid}-btn-close-qr-bottom`);
+
+  // 扫码与综合导入抽屉相关元素
+  const scanDialog = shadow.getElementById(`${uid}-scan-dialog`);
+  const scanViewMain = shadow.getElementById(`${uid}-scan-view-main`);
+  const scanViewResult = shadow.getElementById(`${uid}-scan-view-result`);
+  const cameraVideo = shadow.getElementById(`${uid}-camera-video`);
+  const scanFrame = shadow.getElementById(`${uid}-scan-frame`);
+  const cameraPlaceholder = shadow.getElementById(`${uid}-camera-placeholder`);
+  const cameraStatusText = shadow.getElementById(`${uid}-camera-status-text`);
+  const btnStartCamera = shadow.getElementById(`${uid}-btn-start-camera`);
+  const btnChooseImg = shadow.getElementById(`${uid}-btn-choose-img`);
+  const btnChooseJson = shadow.getElementById(`${uid}-btn-choose-json`);
+  const fileScanImage = shadow.getElementById(`${uid}-file-scan-image`);
+  const fileScanJson = shadow.getElementById(`${uid}-file-scan-json`);
+  const scanHiddenCanvas = shadow.getElementById(`${uid}-scan-hidden-canvas`);
+  const btnCloseScan = shadow.getElementById(`${uid}-btn-close-scan`);
+  const resName = shadow.getElementById(`${uid}-res-name`);
+  const resChips = shadow.getElementById(`${uid}-res-chips`);
+  const resMeta = shadow.getElementById(`${uid}-res-meta`);
+  const resDomainWarning = shadow.getElementById(`${uid}-res-domain-warning`);
+  const btnScanRestoreNow = shadow.getElementById(`${uid}-btn-scan-restore-now`);
+  const btnScanSaveDb = shadow.getElementById(`${uid}-btn-scan-save-db`);
+  const btnScanRetry = shadow.getElementById(`${uid}-btn-scan-retry`);
 
   let tempCapturedData = null;
   let toastTimer = null;
@@ -2769,6 +3252,15 @@ async function initApp() {
               </svg>
               一键恢复
             </button>
+            <button class="${uid}-btn ${uid}-btn-secondary ${uid}-btn-sm btn-qrcode" data-id="${r.id}" title="生成快照二维码以供扫码或导出">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="3" y="3" width="7" height="7"></rect>
+                <rect x="14" y="3" width="7" height="7"></rect>
+                <rect x="14" y="14" width="7" height="7"></rect>
+                <rect x="3" y="14" width="7" height="7"></rect>
+              </svg>
+              二维码
+            </button>
             <button class="${uid}-btn ${uid}-btn-secondary ${uid}-btn-sm btn-copy-single" data-id="${r.id}" title="一键复制加密快照至剪贴板">
               复制
             </button>
@@ -2832,6 +3324,19 @@ async function initApp() {
       });
     });
 
+    listEl.querySelectorAll(".btn-qrcode").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const id = btn.getAttribute("data-id");
+        const records = DB.getRecords();
+        const target = records.find((r) => r.id === id);
+        if (!target) {
+          showToast("未找到对应快照记录", "error");
+          return;
+        }
+        openQrCodeDialog(target);
+      });
+    });
+
     listEl.querySelectorAll(".btn-copy-single").forEach((btn) => {
       btn.addEventListener("click", () => {
         const id = btn.getAttribute("data-id");
@@ -2843,7 +3348,7 @@ async function initApp() {
         }
         const exportData = {
           type: "LSM_SINGLE_EXPORT",
-          version: "1.1.0",
+          version: "1.2.0",
           domain: target.domain || location.hostname,
           exportTime: Date.now(),
           record: target
@@ -2868,8 +3373,8 @@ async function initApp() {
         }
         const exportData = {
           type: "LSM_SINGLE_EXPORT",
-          version: "1.1.0",
-          domain: location.hostname,
+          version: "1.2.0",
+          domain: target.domain || location.hostname,
           exportTime: Date.now(),
           record: target
         };
@@ -2958,6 +3463,353 @@ async function initApp() {
     }
   }
 
+  // -----------------------------------------------------------------------
+  // 快照二维码展示抽屉逻辑
+  // -----------------------------------------------------------------------
+  let currentQrRecord = null;
+  let currentQrJson = "";
+
+  /**
+   * 使用 qrcode-generator 渲染二维码至指定的 Canvas 元素
+   */
+  function renderQrCodeToCanvas(canvas, text, options = {}) {
+    const {
+      margin = 2,
+      cellSize = 4,
+      colorDark = "#0f172a",
+      colorLight = "#ffffff",
+      errorCorrectionLevel = "M"
+    } = options;
+
+    const qrFactory = typeof qrcode !== "undefined" ? qrcode : (typeof window !== "undefined" && window.qrcode ? window.qrcode : null);
+    if (!qrFactory) {
+      throw new Error("QR 编码库 (qrcode-generator) 未成功加载，请检查网络或脚本 @require 声明");
+    }
+
+    // version 0 表示自动计算最佳版本 (1-40)
+    const qr = qrFactory(0, errorCorrectionLevel);
+    qr.addData(text);
+    qr.make();
+
+    const count = qr.getModuleCount();
+    const targetSize = options.size || 220;
+    const computedCellSize = Math.max(2, Math.floor(targetSize / (count + margin * 2)));
+    const totalSize = (count + margin * 2) * computedCellSize;
+
+    canvas.width = totalSize;
+    canvas.height = totalSize;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("无法初始化 Canvas 2D 绘图上下文");
+
+    // 填充背景色
+    ctx.fillStyle = colorLight;
+    ctx.fillRect(0, 0, totalSize, totalSize);
+
+    // 绘制暗色模块
+    ctx.fillStyle = colorDark;
+    for (let r = 0; r < count; r++) {
+      for (let c = 0; c < count; c++) {
+        if (qr.isDark(r, c)) {
+          ctx.fillRect(
+            (c + margin) * computedCellSize,
+            (r + margin) * computedCellSize,
+            computedCellSize,
+            computedCellSize
+          );
+        }
+      }
+    }
+  }
+
+  function getJsQRDecoder() {
+    if (typeof jsQR !== "undefined") return jsQR;
+    if (typeof window !== "undefined" && window.jsQR) return window.jsQR;
+    if (typeof globalThis !== "undefined" && globalThis.jsQR) return globalThis.jsQR;
+    return null;
+  }
+
+  function openQrCodeDialog(record) {
+    if (!record) return;
+    currentQrRecord = record;
+    qrRecName.textContent = record.name || "未命名快照";
+
+    const dateStr = new Date(record.createTime).toLocaleString();
+    const cookieCount = record.summary ? record.summary.cookieCount : 0;
+    const localCount = record.summary ? record.summary.localCount : 0;
+    const sessionCount = record.summary ? record.summary.sessionCount : 0;
+    const sizeKb = record.summary && record.summary.approxBytes ? (record.summary.approxBytes / 1024).toFixed(1) : "-";
+
+    qrRecMeta.innerHTML = `
+      <span>创建时间: <strong>${dateStr}</strong></span> · 
+      <span>域名: <strong>${escapeHtml(record.domain || location.hostname)}</strong></span><br>
+      <span>凭据概览: Cookie <strong>${cookieCount}</strong> 项, Local <strong>${localCount}</strong> 项, Session <strong>${sessionCount}</strong> 项 (${sizeKb} KB)</span>
+    `;
+
+    const exportData = {
+      type: "LSM_SINGLE_EXPORT",
+      version: "1.2.0",
+      domain: record.domain || location.hostname,
+      exportTime: Date.now(),
+      record: record
+    };
+    currentQrJson = JSON.stringify(exportData);
+
+    // 渲染二维码
+    try {
+      renderQrCodeToCanvas(qrCanvas, currentQrJson, {
+        size: 220,
+        margin: 2,
+        errorCorrectionLevel: "M",
+        colorDark: "#0f172a",
+        colorLight: "#ffffff"
+      });
+    } catch (err) {
+      console.error("二维码生成失败:", err);
+      showToast(`二维码生成失败: ${err.message}`, "error");
+    }
+
+    qrDialog.classList.add("open");
+  }
+
+  function closeQrCodeDialog() {
+    qrDialog.classList.remove("open");
+    currentQrRecord = null;
+    currentQrJson = "";
+  }
+
+  // -----------------------------------------------------------------------
+  // 扫码与综合导入抽屉逻辑 (摄像头 / 图片二维码 / JSON 文件)
+  // -----------------------------------------------------------------------
+  let cameraStream = null;
+  let cameraAnimId = null;
+  let currentScannedSnapshot = null;
+
+  function stopCameraScan() {
+    if (cameraAnimId) {
+      cancelAnimationFrame(cameraAnimId);
+      cameraAnimId = null;
+    }
+    if (cameraStream) {
+      try {
+        cameraStream.getTracks().forEach((track) => track.stop());
+      } catch (e) {}
+      cameraStream = null;
+    }
+    if (cameraVideo) {
+      cameraVideo.srcObject = null;
+    }
+    if (scanFrame) scanFrame.style.display = "none";
+    if (cameraPlaceholder) cameraPlaceholder.style.display = "flex";
+    if (btnStartCamera) btnStartCamera.style.display = "inline-flex";
+    if (cameraStatusText) cameraStatusText.textContent = "未开启摄像头实时扫码";
+  }
+
+  async function startCameraScan() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      showToast("当前环境或浏览器不支持访问摄像头", "error");
+      return;
+    }
+    try {
+      cameraStatusText.textContent = "正在请求摄像头权限...";
+      btnStartCamera.style.display = "none";
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } }
+      });
+      cameraStream = stream;
+      cameraVideo.srcObject = stream;
+      cameraVideo.setAttribute("playsinline", "true");
+      await cameraVideo.play();
+
+      cameraPlaceholder.style.display = "none";
+      scanFrame.style.display = "block";
+      cameraStatusText.textContent = "正在实时扫码中，请对准二维码...";
+
+      scanCameraLoop();
+    } catch (err) {
+      console.error("启动摄像头失败:", err);
+      stopCameraScan();
+      cameraStatusText.textContent = "无法访问摄像头: " + (err.message || "用户拒绝或设备不可用");
+      showToast("无法访问摄像头: " + (err.message || "权限被拒绝"), "error");
+    }
+  }
+
+  function scanCameraLoop() {
+    if (!cameraStream) return;
+    if (cameraVideo.readyState === cameraVideo.HAVE_ENOUGH_DATA) {
+      const canvas = scanHiddenCanvas || document.createElement("canvas");
+      canvas.width = cameraVideo.videoWidth;
+      canvas.height = cameraVideo.videoHeight;
+      const ctx = canvas.getContext("2d", { willReadFrequently: true });
+      ctx.drawImage(cameraVideo, 0, 0, canvas.width, canvas.height);
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const decoder = getJsQRDecoder();
+      if (decoder) {
+        const code = decoder(imageData.data, imageData.width, imageData.height, {
+          inversionAttempts: "dontInvert"
+        });
+        if (code && code.data) {
+          stopCameraScan();
+          handleQrDecodedString(code.data);
+          return;
+        }
+      }
+    }
+    cameraAnimId = requestAnimationFrame(scanCameraLoop);
+  }
+
+  function resetScanModal() {
+    stopCameraScan();
+    currentScannedSnapshot = null;
+    scanViewMain.style.display = "flex";
+    scanViewResult.style.display = "none";
+    if (fileScanImage) fileScanImage.value = "";
+    if (fileScanJson) fileScanJson.value = "";
+  }
+
+  function openScanImportModal() {
+    resetScanModal();
+    scanDialog.classList.add("open");
+  }
+
+  function closeScanDialog() {
+    stopCameraScan();
+    scanDialog.classList.remove("open");
+    currentScannedSnapshot = null;
+  }
+
+  function handleQrDecodedString(rawStr) {
+    if (!rawStr || typeof rawStr !== "string") {
+      showToast("识别到的内容为空", "error");
+      return;
+    }
+    let json;
+    try {
+      json = JSON.parse(rawStr.trim());
+    } catch {
+      showToast("二维码解析成功，但内容不是合法的 JSON 快照数据", "error");
+      return;
+    }
+    handleParsedSnapshot(json, "扫码导入快照");
+  }
+
+  function handleImageQrFile(file) {
+    if (!file) return;
+    showToast("正在识别图片中的二维码...", "info");
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = scanHiddenCanvas || document.createElement("canvas");
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext("2d", { willReadFrequently: true });
+        ctx.drawImage(img, 0, 0);
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const decoder = getJsQRDecoder();
+        if (!decoder) {
+          showToast("jsQR 解码库未成功加载，请检查网络或脚本 @require 依赖", "error");
+          return;
+        }
+        const code = decoder(imageData.data, imageData.width, imageData.height, {
+          inversionAttempts: "attemptBoth"
+        });
+        if (code && code.data) {
+          handleQrDecodedString(code.data);
+        } else {
+          showToast("未能从该图片中识别到有效二维码，请确认图片清晰", "error");
+        }
+      };
+      img.onerror = () => showToast("图片加载失败", "error");
+      img.src = e.target.result;
+    };
+    reader.onerror = () => showToast("读取文件失败", "error");
+    reader.readAsDataURL(file);
+  }
+
+  function handleParsedSnapshot(json, defaultName) {
+    let targetRecord = null;
+    let recordsToImport = [];
+    let sourceDomain = json.domain || "";
+    let name = defaultName || "导入快照";
+
+    if (json.type === "LSM_SINGLE_EXPORT" && json.record) {
+      targetRecord = json.record;
+      recordsToImport = [json.record];
+      sourceDomain = json.record.domain || sourceDomain;
+      name = json.record.name || name;
+    } else if (json.type === "LSM_BATCH_EXPORT" && Array.isArray(json.records) && json.records.length > 0) {
+      targetRecord = json.records[0];
+      recordsToImport = json.records;
+      sourceDomain = json.domain || targetRecord.domain || sourceDomain;
+      name = targetRecord.name ? `${targetRecord.name} (等共 ${json.records.length} 条)` : name;
+    } else if (json.name && json.cipherData) {
+      targetRecord = json;
+      recordsToImport = [json];
+      sourceDomain = json.domain || sourceDomain;
+      name = json.name;
+    } else if (Array.isArray(json) && json.length > 0 && json[0].cipherData) {
+      targetRecord = json[0];
+      recordsToImport = json;
+      sourceDomain = targetRecord.domain || sourceDomain;
+      name = targetRecord.name ? `${targetRecord.name} (共 ${json.length} 条)` : name;
+    } else if (json.cookies || json.localStorage) {
+      targetRecord = {
+        id: "rec_" + Date.now(),
+        name: name,
+        domain: json.domain || location.hostname,
+        url: json.url || location.href,
+        createTime: Date.now(),
+        summary: json.summary || {
+          cookieCount: Array.isArray(json.cookies) ? json.cookies.length : 0,
+          localCount: json.localStorage ? Object.keys(json.localStorage).length : 0,
+          sessionCount: json.sessionStorage ? Object.keys(json.sessionStorage).length : 0
+        },
+        cipherData: { encrypted: false, payload: JSON.stringify(json) }
+      };
+      recordsToImport = [targetRecord];
+      sourceDomain = targetRecord.domain;
+    } else {
+      showToast("无法识别的快照数据格式", "error");
+      return;
+    }
+
+    currentScannedSnapshot = {
+      json: json,
+      targetRecord: targetRecord,
+      recordsToImport: recordsToImport,
+      sourceDomain: sourceDomain,
+      name: name
+    };
+
+    resName.textContent = name;
+    const summary = targetRecord.summary || {};
+    const cookieCount = typeof summary.cookieCount === "number" ? summary.cookieCount : "-";
+    const localCount = typeof summary.localCount === "number" ? summary.localCount : "-";
+    const sessionCount = typeof summary.sessionCount === "number" ? summary.sessionCount : "-";
+    const isEnc = targetRecord.cipherData ? (targetRecord.cipherData.encrypted ? "AES-GCM" : "明文") : "未知";
+
+    resChips.innerHTML = `
+      <span class="${uid}-chip" style="background:#eff6ff;color:#2563eb;border-color:#bfdbfe;">🍪 Cookie: ${cookieCount}</span>
+      <span class="${uid}-chip" style="background:#f0fdf4;color:#16a34a;border-color:#bbf7d0;">💾 Local: ${localCount}</span>
+      <span class="${uid}-chip" style="background:#faf5ff;color:#9333ea;border-color:#e9d5ff;">📦 Session: ${sessionCount}</span>
+      <span class="${uid}-chip" style="background:#f8fafc;color:#475569;border-color:#e2e8f0;">🔒 ${isEnc}</span>
+    `;
+
+    const createTimeStr = targetRecord.createTime ? new Date(targetRecord.createTime).toLocaleString() : "未知时间";
+    resMeta.textContent = `来源域名: ${sourceDomain || location.hostname} · 创建于 ${createTimeStr}`;
+
+    if (sourceDomain && sourceDomain !== location.hostname) {
+      resDomainWarning.style.display = "block";
+      resDomainWarning.innerHTML = `⚠️ <strong>域名不匹配提醒</strong>：该快照保存自 <code>${escapeHtml(sourceDomain)}</code>，而当前所在网页为 <code>${escapeHtml(location.hostname)}</code>。直接恢复可能会因域名隔离导致部分 Cookie 无法生效。`;
+    } else {
+      resDomainWarning.style.display = "none";
+    }
+
+    scanViewMain.style.display = "none";
+    scanViewResult.style.display = "flex";
+    showToast("快照解析成功，请选择操作", "success");
+  }
+
   function openWindow() {
     if (ball) {
       ball.style.display = "none";
@@ -2980,6 +3832,8 @@ async function initApp() {
       ball.classList.remove("hidden");
     }
     closeSaveDialog();
+    closeQrCodeDialog();
+    closeScanDialog();
   }
 
   // -----------------------------------------------------------------------
@@ -2989,7 +3843,7 @@ async function initApp() {
   makeDraggable(win, header);
 
   // 阻止管理窗口与抽屉弹窗内滚动穿透到宿主网页（PC 滚轮 + 移动端触摸双重拦截）
-  bindScrollLock(win, `.${uid}-content, .${uid}-save-dialog`);
+  bindScrollLock(win, `.${uid}-content, .${uid}-save-dialog, .${uid}-qr-dialog, .${uid}-scan-dialog`);
   bindScrollLock(menuMask, null);
 
   // 悬浮球右上角菜单
@@ -3365,26 +4219,213 @@ async function initApp() {
     }
   });
 
-  // 保存抽屉按键事件（无论焦点是否在输入框均生效）
+  // 保存抽屉按键与全局弹窗 Escape 事件
   window.addEventListener(
     "keydown",
     (e) => {
-      // 仅在主管理窗口可见且保存抽屉处于打开状态时响应
+      // 仅在主管理窗口可见时响应
       if (win.classList.contains("hidden") || win.style.display === "none") return;
-      if (!saveDialog.classList.contains("open")) return;
 
-      if (e.key === "Enter") {
-        e.preventDefault();
-        e.stopPropagation();
-        btnConfirmSave.click();
-      } else if (e.key === "Escape") {
-        e.preventDefault();
-        e.stopPropagation();
-        closeSaveDialog();
+      if (e.key === "Escape") {
+        if (qrDialog && qrDialog.classList.contains("open")) {
+          e.preventDefault();
+          e.stopPropagation();
+          closeQrCodeDialog();
+          return;
+        }
+        if (scanDialog && scanDialog.classList.contains("open")) {
+          e.preventDefault();
+          e.stopPropagation();
+          closeScanDialog();
+          return;
+        }
+        if (saveDialog && saveDialog.classList.contains("open")) {
+          e.preventDefault();
+          e.stopPropagation();
+          closeSaveDialog();
+          return;
+        }
+      } else if (e.key === "Enter") {
+        if (saveDialog && saveDialog.classList.contains("open")) {
+          e.preventDefault();
+          e.stopPropagation();
+          btnConfirmSave.click();
+          return;
+        }
       }
     },
     true
   );
+
+  // -----------------------------------------------------------------------
+  // 二维码与扫码导入抽屉操作事件绑定
+  // -----------------------------------------------------------------------
+  const btnOpenScan = shadow.getElementById(`${uid}-btn-open-scan`);
+  if (btnOpenScan) {
+    btnOpenScan.addEventListener("click", () => openScanImportModal());
+  }
+
+  const btnMenuScan = shadow.getElementById(`${uid}-btn-menu-scan`);
+  if (btnMenuScan) {
+    btnMenuScan.addEventListener("click", () => {
+      dropdownMenu.classList.add("hidden");
+      openScanImportModal();
+    });
+  }
+
+  // 二维码抽屉按钮
+  if (btnCloseQr) btnCloseQr.addEventListener("click", () => closeQrCodeDialog());
+  if (btnCloseQrBottom) btnCloseQrBottom.addEventListener("click", () => closeQrCodeDialog());
+
+  if (btnDownloadQr) {
+    btnDownloadQr.addEventListener("click", () => {
+      if (!qrCanvas) return;
+      try {
+        const url = qrCanvas.toDataURL("image/png");
+        const a = document.createElement("a");
+        const fileName = (currentQrRecord && currentQrRecord.name ? currentQrRecord.name : "snapshot").replace(/[\\/:*?"<>|]/g, "_");
+        a.href = url;
+        a.download = `${location.hostname}_${fileName}_qr.png`;
+        a.click();
+        showToast("二维码图片已开始下载", "success");
+      } catch (err) {
+        showToast(`二维码图片下载失败: ${err.message}`, "error");
+      }
+    });
+  }
+
+  if (btnCopyQrData) {
+    btnCopyQrData.addEventListener("click", () => {
+      if (!currentQrJson) {
+        showToast("暂无可复制的二维码数据", "info");
+        return;
+      }
+      try {
+        if (typeof GM_setClipboard === "function") {
+          GM_setClipboard(currentQrJson, "text");
+        } else if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(currentQrJson).catch(() => {});
+        }
+        showToast("快照 JSON 数据已复制到剪贴板！", "success");
+      } catch (err) {
+        showToast(`复制失败: ${err.message}`, "error");
+      }
+    });
+  }
+
+  // 扫码与导入抽屉按钮
+  if (btnCloseScan) btnCloseScan.addEventListener("click", () => closeScanDialog());
+  if (btnStartCamera) btnStartCamera.addEventListener("click", () => startCameraScan());
+
+  if (btnChooseImg && fileScanImage) {
+    btnChooseImg.addEventListener("click", () => {
+      fileScanImage.value = "";
+      fileScanImage.click();
+    });
+  }
+
+  if (fileScanImage) {
+    fileScanImage.addEventListener("change", (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (file) handleImageQrFile(file);
+    });
+  }
+
+  if (btnChooseJson && fileScanJson) {
+    btnChooseJson.addEventListener("click", () => {
+      fileScanJson.value = "";
+      fileScanJson.click();
+    });
+  }
+
+  if (fileScanJson) {
+    fileScanJson.addEventListener("change", async (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (!file) return;
+      try {
+        showToast("正在读取 JSON 快照文件...", "info");
+        const json = await readFileAsJson(file);
+        handleParsedSnapshot(json, file.name);
+      } catch (err) {
+        showToast(`读取失败: ${err.message}`, "error");
+      }
+    });
+  }
+
+  // 拖拽解析支持
+  if (scanViewMain) {
+    scanViewMain.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+    });
+    scanViewMain.addEventListener("drop", async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+      if (!file) return;
+      if (file.type.startsWith("image/")) {
+        handleImageQrFile(file);
+      } else if (file.name.endsWith(".json") || file.type.includes("json")) {
+        try {
+          showToast("正在读取 JSON 快照文件...", "info");
+          const json = await readFileAsJson(file);
+          handleParsedSnapshot(json, file.name);
+        } catch (err) {
+          showToast(`读取失败: ${err.message}`, "error");
+        }
+      } else {
+        showToast("请拖入图片二维码截图或 .json 快照文件", "error");
+      }
+    });
+  }
+
+  // 扫码结果视图操作
+  if (btnScanRestoreNow) {
+    btnScanRestoreNow.addEventListener("click", async () => {
+      if (!currentScannedSnapshot || !currentScannedSnapshot.json) {
+        showToast("无可恢复的快照数据", "error");
+        return;
+      }
+      const targetJson = currentScannedSnapshot.json;
+      const targetName = currentScannedSnapshot.name;
+      try {
+        closeScanDialog();
+        await restoreSnapshotData(targetJson, targetName);
+      } catch (err) {
+        showToast(`恢复失败: ${err.message}`, "error");
+      }
+    });
+  }
+
+  if (btnScanSaveDb) {
+    btnScanSaveDb.addEventListener("click", () => {
+      if (!currentScannedSnapshot || !currentScannedSnapshot.recordsToImport) {
+        showToast("无可保存的快照数据", "error");
+        return;
+      }
+      const recordsToImport = currentScannedSnapshot.recordsToImport;
+      try {
+        const { count, skipped } = DB.importRecords(recordsToImport);
+        refreshList();
+        closeScanDialog();
+        if (count === 0 && skipped > 0) {
+          showToast(`检测到 ${skipped} 条快照数据已存在，已全部跳过`, "info");
+        } else if (skipped > 0) {
+          showToast(`成功导入 ${count} 条快照，跳过 ${skipped} 条重复记录`, "success");
+        } else {
+          showToast(`成功导入并保存 ${count} 条快照记录！`, "success");
+        }
+      } catch (err) {
+        showToast(`保存失败: ${err.message}`, "error");
+      }
+    });
+  }
+
+  if (btnScanRetry) {
+    btnScanRetry.addEventListener("click", () => {
+      resetScanModal();
+    });
+  }
 
   // 初始化位置与列表
   restoreUIPos();
