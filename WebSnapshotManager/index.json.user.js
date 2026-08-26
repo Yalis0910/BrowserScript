@@ -1389,6 +1389,7 @@ async function initApp() {
   function formatTime(timestamp) {
     if (!timestamp) return "-";
     const d = new Date(timestamp);
+    if (isNaN(d.getTime())) return "-";
     const pad = (n) => String(n).padStart(2, "0");
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
   }
@@ -2337,6 +2338,20 @@ async function initApp() {
       display: block;
       border-radius: 6px;
     }
+    .${uid}-qr-overflow-box {
+      background: #fffbeb;
+      border: 1px solid #fde68a;
+      border-radius: 12px;
+      padding: 16px 12px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      text-align: center;
+      max-width: 100%;
+      box-shadow: 0 2px 8px rgba(245, 158, 11, 0.08);
+    }
 
     /* 扫码与综合导入抽屉弹窗 */
     .${uid}-scan-dialog {
@@ -2766,8 +2781,22 @@ async function initApp() {
             <strong id="${uid}-qr-rec-name" style="font-size: 14px; color: #0f172a;">快照名称</strong>
             <div id="${uid}-qr-rec-meta" style="font-size: 11px; color: #64748b; margin-top: 2px;"></div>
           </div>
-          <div class="${uid}-qr-canvas-wrap">
+          <div class="${uid}-qr-canvas-wrap" id="${uid}-qr-canvas-wrap">
             <canvas id="${uid}-qr-canvas"></canvas>
+          </div>
+          <div class="${uid}-qr-overflow-box" id="${uid}-qr-overflow-box" style="display: none;">
+            <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#d97706" stroke-width="2">
+              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+              <line x1="12" y1="9" x2="12" y2="13"></line>
+              <line x1="12" y1="17" x2="12.01" y2="17"></line>
+            </svg>
+            <div style="font-weight: 700; color: #b45309; font-size: 13px;">快照数据过大，无法生成二维码</div>
+            <div id="${uid}-qr-overflow-desc" style="font-size: 11px; color: #78350f; text-align: center; line-height: 1.4;">
+              当前快照数据超出二维码标准容量上限（约 2KB）。
+            </div>
+            <div style="font-size: 11px; color: #92400e; background: #fef3c7; padding: 6px 10px; border-radius: 6px; border: 1px dashed #fcd34d;">
+              💡 建议使用下方「复制数据」或「导出文件」进行跨端流转
+            </div>
           </div>
           <div id="${uid}-qr-tip" style="font-size: 11px; color: #64748b; text-align: center;">
             使用另一台设备或快照助手的「扫码」功能即可一键导入与恢复
@@ -2927,7 +2956,11 @@ async function initApp() {
   const qrDialog = shadow.getElementById(`${uid}-qr-dialog`);
   const qrRecName = shadow.getElementById(`${uid}-qr-rec-name`);
   const qrRecMeta = shadow.getElementById(`${uid}-qr-rec-meta`);
+  const qrCanvasWrap = shadow.getElementById(`${uid}-qr-canvas-wrap`);
   const qrCanvas = shadow.getElementById(`${uid}-qr-canvas`);
+  const qrOverflowBox = shadow.getElementById(`${uid}-qr-overflow-box`);
+  const qrOverflowDesc = shadow.getElementById(`${uid}-qr-overflow-desc`);
+  const qrTip = shadow.getElementById(`${uid}-qr-tip`);
   const btnDownloadQr = shadow.getElementById(`${uid}-btn-download-qr`);
   const btnCopyQrData = shadow.getElementById(`${uid}-btn-copy-qr-data`);
   const btnCloseQr = shadow.getElementById(`${uid}-btn-close-qr`);
@@ -3170,7 +3203,7 @@ async function initApp() {
     if (filterText) {
       records = allRecords.filter((r) => {
         const nameMatch = (r.name || "").toLowerCase().includes(filterText);
-        const timeMatch = formatTime(r.createdAt).includes(filterText);
+        const timeMatch = formatTime(r.createdAt || r.createTime || r.updatedAt).includes(filterText);
         const urlMatch = (r.url || "").toLowerCase().includes(filterText);
         return nameMatch || timeMatch || urlMatch;
       });
@@ -3221,7 +3254,7 @@ async function initApp() {
               ${escapeHtml(r.name)}
               ${isActive ? `<span class="${uid}-badge-active">✓ 当前生效</span>` : ""}
             </span>
-            <span class="${uid}-card-time">${formatTime(r.createdAt)}</span>
+            <span class="${uid}-card-time">${formatTime(r.createdAt || r.createTime || r.updatedAt)}</span>
           </div>
           <div class="${uid}-card-chips">
             <span class="${uid}-chip ${uid}-chip-cookie">🍪 Cookie: ${cookieCount}</span>
@@ -3533,11 +3566,13 @@ async function initApp() {
     currentQrRecord = record;
     qrRecName.textContent = record.name || "未命名快照";
 
-    const dateStr = new Date(record.createTime).toLocaleString();
+    const timeVal = record.createdAt || record.createTime || record.updatedAt || Date.now();
+    const dateStr = formatTime(timeVal);
     const cookieCount = record.summary ? record.summary.cookieCount : 0;
     const localCount = record.summary ? record.summary.localCount : 0;
     const sessionCount = record.summary ? record.summary.sessionCount : 0;
-    const sizeKb = record.summary && record.summary.approxBytes ? (record.summary.approxBytes / 1024).toFixed(1) : "-";
+    const approxBytes = record.summary && record.summary.approxBytes ? record.summary.approxBytes : 0;
+    const sizeKb = approxBytes ? (approxBytes / 1024).toFixed(1) : "-";
 
     qrRecMeta.innerHTML = `
       <span>创建时间: <strong>${dateStr}</strong></span> · 
@@ -3553,19 +3588,65 @@ async function initApp() {
       record: record
     };
     currentQrJson = JSON.stringify(exportData);
+    const byteLength = new Blob([currentQrJson]).size;
+    const actualKb = (byteLength / 1024).toFixed(1);
 
-    // 渲染二维码
-    try {
-      renderQrCodeToCanvas(qrCanvas, currentQrJson, {
-        size: 220,
-        margin: 2,
-        errorCorrectionLevel: "M",
-        colorDark: "#0f172a",
-        colorLight: "#ffffff"
-      });
-    } catch (err) {
-      console.error("二维码生成失败:", err);
-      showToast(`二维码生成失败: ${err.message}`, "error");
+    // 标准 QR Code Level M 最大容量约 2,331 字节 (~2.2 KB)
+    // 如果超过 2,200 字节，直接判定为超限，避免尝试绘制抛出异常
+    const QR_MAX_SAFE_BYTES = 2200;
+
+    if (byteLength > QR_MAX_SAFE_BYTES) {
+      if (qrCanvasWrap) qrCanvasWrap.style.display = "none";
+      if (qrOverflowBox) qrOverflowBox.style.display = "flex";
+      if (qrOverflowDesc) {
+        qrOverflowDesc.innerHTML = `当前快照数据体积为 <strong>${actualKb} KB</strong> (${byteLength} 字节)，已超出标准二维码容纳极限（约 2.2 KB）。`;
+      }
+      if (qrTip) qrTip.style.display = "none";
+      if (btnDownloadQr) {
+        btnDownloadQr.disabled = true;
+        btnDownloadQr.style.opacity = "0.45";
+        btnDownloadQr.style.cursor = "not-allowed";
+        btnDownloadQr.title = "快照数据过大，无法生成二维码图片";
+      }
+    } else {
+      let renderSuccess = false;
+      try {
+        renderQrCodeToCanvas(qrCanvas, currentQrJson, {
+          size: 220,
+          margin: 2,
+          errorCorrectionLevel: "M",
+          colorDark: "#0f172a",
+          colorLight: "#ffffff"
+        });
+        renderSuccess = true;
+      } catch (err) {
+        console.warn("二维码生成失败:", err);
+      }
+
+      if (renderSuccess) {
+        if (qrCanvasWrap) qrCanvasWrap.style.display = "flex";
+        if (qrOverflowBox) qrOverflowBox.style.display = "none";
+        if (qrTip) qrTip.style.display = "block";
+        if (btnDownloadQr) {
+          btnDownloadQr.disabled = false;
+          btnDownloadQr.style.opacity = "1";
+          btnDownloadQr.style.cursor = "pointer";
+          btnDownloadQr.title = "下载二维码 PNG 图片";
+        }
+      } else {
+        if (qrCanvasWrap) qrCanvasWrap.style.display = "none";
+        if (qrOverflowBox) qrOverflowBox.style.display = "flex";
+        if (qrOverflowDesc) {
+          qrOverflowDesc.innerHTML = `当前快照数据体积为 <strong>${actualKb} KB</strong>，超出二维码容量限制。`;
+        }
+        if (qrTip) qrTip.style.display = "none";
+        if (btnDownloadQr) {
+          btnDownloadQr.disabled = true;
+          btnDownloadQr.style.opacity = "0.45";
+          btnDownloadQr.style.cursor = "not-allowed";
+          btnDownloadQr.title = "快照数据过大，无法生成二维码图片";
+        }
+      }
     }
 
     qrDialog.classList.add("open");
@@ -3575,6 +3656,11 @@ async function initApp() {
     qrDialog.classList.remove("open");
     currentQrRecord = null;
     currentQrJson = "";
+    if (btnDownloadQr) {
+      btnDownloadQr.disabled = false;
+      btnDownloadQr.style.opacity = "1";
+      btnDownloadQr.style.cursor = "pointer";
+    }
   }
 
   // -----------------------------------------------------------------------
@@ -3758,6 +3844,7 @@ async function initApp() {
         name: name,
         domain: json.domain || location.hostname,
         url: json.url || location.href,
+        createdAt: Date.now(),
         createTime: Date.now(),
         summary: json.summary || {
           cookieCount: Array.isArray(json.cookies) ? json.cookies.length : 0,
@@ -3795,7 +3882,8 @@ async function initApp() {
       <span class="${uid}-chip" style="background:#f8fafc;color:#475569;border-color:#e2e8f0;">🔒 ${isEnc}</span>
     `;
 
-    const createTimeStr = targetRecord.createTime ? new Date(targetRecord.createTime).toLocaleString() : "未知时间";
+    const createTimeVal = targetRecord.createdAt || targetRecord.createTime || (json && (json.exportTime || json.createdAt || json.createTime));
+    const createTimeStr = createTimeVal ? formatTime(createTimeVal) : "未知时间";
     resMeta.textContent = `来源域名: ${sourceDomain || location.hostname} · 创建于 ${createTimeStr}`;
 
     if (sourceDomain && sourceDomain !== location.hostname) {
@@ -4279,6 +4367,10 @@ async function initApp() {
 
   if (btnDownloadQr) {
     btnDownloadQr.addEventListener("click", () => {
+      if (btnDownloadQr.disabled) {
+        showToast("快照数据过大无法生成二维码图片，请使用「复制数据」或「导出文件」", "error");
+        return;
+      }
       if (!qrCanvas) return;
       try {
         const url = qrCanvas.toDataURL("image/png");
