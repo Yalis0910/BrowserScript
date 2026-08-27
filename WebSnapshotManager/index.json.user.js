@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         网站快照存储与恢复助手
 // @namespace    https://github.com/moyefu/BrowserScript/WebSnapshotManager
-// @version      1.2.1
-// @description  针对指定网站实现快照（Cookie、LocalStorage、SessionStorage）的一键存储、命名、加密备份、二维码生成/扫码与一键恢复
+// @version      1.3.0
+// @description  针对指定网站实现快照（Cookie、LocalStorage、SessionStorage）的一键存储、命名、加密备份、GitHub Gist云同步、二维码生成/扫码与一键恢复
 // @author       MOYEFU
 // @icon         https://pic1.imgdb.cn/i/034D4F8VwYLLoU73kkQs3l.gif
 // @homepage     https://scriptcat.org/zh-CN/script-show-page/7633
@@ -16,6 +16,8 @@
 // @grant        GM_registerMenuCommand
 // @grant        GM_cookie
 // @grant        GM_setClipboard
+// @grant        GM_xmlhttpRequest
+// @connect      api.github.com
 // @require      https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js
 // @require      https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js
 // @tag          MOYEFU
@@ -48,6 +50,21 @@ Config:
     description: 恢复快照成功后直接刷新或跳转至来源页面（不再弹窗确认）
     type: checkbox
     default: false
+  sync_auto:
+    title: 快照变更时自动同步
+    description: 本地快照新增、改名、删除时，防抖 2 秒自动同步至 GitHub Gist
+    type: checkbox
+    default: false
+  sync_gist_token:
+    title: GitHub Gist Token
+    description: 用于云同步的 GitHub Personal Access Token（需勾选 gist 权限）
+    type: text
+    default: ""
+  sync_gist_id:
+    title: GitHub Gist ID
+    description: 存储快照数据的 Gist ID（留空可在面板中点击一键自动创建）
+    type: text
+    default: ""
 ==/UserConfig== */
 
 // 全局暴露的 UI 实例，供菜单命令与外部调度使用
@@ -64,53 +81,48 @@ function getFilterMode() {
   return mode === "blacklist" ? "blacklist" : "whitelist";
 }
 
+function getHostRules() {
+  let raw = GM_getValue("Config.host_list", null);
+  if (raw === null || raw === undefined) {
+    raw = GM_getValue("Config.show_host", "");
+  }
+  return String(raw || "")
+    .split("\n")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+function isHostMatched() {
+  const lines = getHostRules();
+  if (!lines.length) return false;
+  const candidates = [
+    location.href,
+    location.origin,
+    location.protocol + "//" + location.host,
+    location.host,
+    location.hostname
+  ];
+  return lines.some((line) => {
+    const re = new RegExp(line ? ("^" + line.replace(/[.+?^${}()|[\\]\\]/g, "\\$&").replace(/\\*/g, ".*") + "$") : "^$", "i");
+    return candidates.some((c) => re.test(c));
+  });
+}
+
+function hostBlocked() {
+  try {
+    const mode = getFilterMode();
+    const matched = isHostMatched();
+    const lines = getHostRules();
+    if (mode === "blacklist") return matched;
+    if (!lines.length) return true;
+    return !matched;
+  } catch (e) {
+    return true;
+  }
+}
+
 (async () => {
   "use strict";
-
-  // =========================================================================
-  // 0. 用户配置：filter_mode（白名单/黑名单）+ host_list（域名列表，支持 * 通配符）
-  //    默认白名单模式：仅匹配到列表中的网站才运行脚本
-  //    黑名单模式：匹配到列表中的网站不运行，其他网站均运行
-  // =========================================================================
-  function getHostRules() {
-    let raw = GM_getValue("Config.host_list", null);
-    if (raw === null || raw === undefined) {
-      raw = GM_getValue("Config.show_host", "");
-    }
-    return String(raw || "")
-      .split("\n")
-      .map((s) => s.trim())
-      .filter(Boolean);
-  }
-
-  function isHostMatched() {
-    const lines = getHostRules();
-    if (!lines.length) return false;
-    const candidates = [
-      location.href,
-      location.origin,
-      location.protocol + "//" + location.host,
-      location.host,
-      location.hostname
-    ];
-    return lines.some((line) => {
-      const re = new RegExp(line ? ("^" + line.replace(/[.+?^${}()|[\\]\\]/g, "\\$&").replace(/\\*/g, ".*") + "$") : "^$", "i");
-      return candidates.some((c) => re.test(c));
-    });
-  }
-
-  function hostBlocked() {
-    try {
-      const mode = getFilterMode();
-      const matched = isHostMatched();
-      const lines = getHostRules();
-      if (mode === "blacklist") return matched;
-      if (!lines.length) return true;
-      return !matched;
-    } catch (e) {
-      return true;
-    }
-  }
 
   // =========================================================================
   // 菜单命令注册（Tampermonkey / ScriptCat 菜单）
@@ -154,6 +166,23 @@ function getFilterMode() {
     const reloadText = isAutoReload ? "🔄 恢复后【自动刷新/跳转】 (点击切换为不刷新)" : "⏸️ 恢复后【不默认刷新】 (点击切换为自动刷新)";
     GM_registerMenuCommand(reloadText, () => {
       showToggleAutoReloadDialog();
+    });
+
+    // 6. 云同步设置
+    GM_registerMenuCommand("☁️ 云同步设置与状态 (GitHub Gist)", async () => {
+      if (hostBlocked()) {
+        showBlockedDialog();
+      } else {
+        if (!LSM_UI) {
+          await initApp();
+        }
+        if (LSM_UI && typeof LSM_UI.openWindow === "function") {
+          LSM_UI.openWindow();
+          if (typeof LSM_UI.openCloudSyncDialog === "function") {
+            LSM_UI.openCloudSyncDialog();
+          }
+        }
+      }
     });
   }
 
@@ -257,18 +286,42 @@ const removeHostFromShowList = disableCurrentHost;
 function bindScrollLock(mask, scrollableSelector) {
   let startY = 0;
 
+  function findScrollable(target) {
+    let el = target;
+    while (el && el !== mask && el !== document.documentElement && el !== document.body) {
+      if (el.scrollHeight > el.clientHeight) {
+        const style = window.getComputedStyle ? window.getComputedStyle(el) : null;
+        if (style) {
+          const overflowY = style.overflowY;
+          if (overflowY === "auto" || overflowY === "scroll" || overflowY === "overlay") {
+            return el;
+          }
+        }
+      }
+      if (scrollableSelector && el.matches && el.matches(scrollableSelector) && el.scrollHeight > el.clientHeight) {
+        return el;
+      }
+      el = el.parentElement || (el.getRootNode ? el.getRootNode().host : null);
+    }
+    return scrollableSelector && target.closest ? target.closest(scrollableSelector) : null;
+  }
+
   // 1. PC 端鼠标滚轮事件精确拦截
   mask.addEventListener(
     "wheel",
     (e) => {
       e.stopPropagation();
-      const scrollable = scrollableSelector && e.target.closest ? e.target.closest(scrollableSelector) : null;
+      const scrollable = findScrollable(e.target);
       if (!scrollable) {
         e.preventDefault();
         return;
       }
       const { scrollTop, scrollHeight, clientHeight } = scrollable;
       const deltaY = e.deltaY;
+      if (scrollHeight <= clientHeight) {
+        e.preventDefault();
+        return;
+      }
       if ((deltaY < 0 && scrollTop <= 0) || (deltaY > 0 && scrollTop + clientHeight >= scrollHeight - 1)) {
         e.preventDefault();
       }
@@ -291,7 +344,7 @@ function bindScrollLock(mask, scrollableSelector) {
     "touchmove",
     (e) => {
       if (e.touches.length !== 1) return;
-      const scrollable = scrollableSelector && e.target.closest ? e.target.closest(scrollableSelector) : null;
+      const scrollable = findScrollable(e.target);
       if (!scrollable) {
         if (e.cancelable) e.preventDefault();
         e.stopPropagation();
@@ -1272,7 +1325,7 @@ async function initApp() {
   };
 
   // -----------------------------------------------------------------------
-  // 数据库与存储管理
+  // 数据库、墓碑管理与多域名存储
   // -----------------------------------------------------------------------
   const DB = {
     getStorageKey(domain) {
@@ -1290,25 +1343,93 @@ async function initApp() {
       GM_setValue(key, records);
     },
 
+    // --- 墓碑 (Tombstones) 机制 ---
+    // 用于记录已删除快照的 ID 及删除时间戳，彻底杜绝两端同步时被旧云端数据反向复活
+    getTombstones(domain) {
+      const raw = GM_getValue("LSM_TOMBSTONES", {});
+      const tombstones = (raw && typeof raw === "object") ? raw : {};
+
+      // 30 天自动过期垃圾回收 (30 days in ms = 2592000000)
+      const expireThreshold = Date.now() - 30 * 24 * 3600 * 1000;
+      let changed = false;
+      for (const d of Object.keys(tombstones)) {
+        if (Array.isArray(tombstones[d])) {
+          const filtered = tombstones[d].filter((t) => t && t.deletedAt && t.deletedAt > expireThreshold);
+          if (filtered.length !== tombstones[d].length) {
+            tombstones[d] = filtered;
+            changed = true;
+          }
+        }
+      }
+      if (changed) {
+        GM_setValue("LSM_TOMBSTONES", tombstones);
+      }
+
+      if (domain) {
+        return Array.isArray(tombstones[domain]) ? tombstones[domain] : [];
+      }
+      return tombstones;
+    },
+
+    saveTombstones(tombstoneMap) {
+      if (tombstoneMap && typeof tombstoneMap === "object") {
+        GM_setValue("LSM_TOMBSTONES", tombstoneMap);
+      }
+    },
+
+    recordTombstone(id, domain) {
+      const d = domain || location.hostname;
+      const allTombstones = this.getTombstones();
+      if (!Array.isArray(allTombstones[d])) {
+        allTombstones[d] = [];
+      }
+      const existing = allTombstones[d].find((t) => t.id === id);
+      if (existing) {
+        existing.deletedAt = Date.now();
+      } else {
+        allTombstones[d].push({ id, deletedAt: Date.now() });
+      }
+      this.saveTombstones(allTombstones);
+    },
+
+    clearTombstone(id, domain) {
+      const d = domain || location.hostname;
+      const allTombstones = this.getTombstones();
+      if (Array.isArray(allTombstones[d])) {
+        allTombstones[d] = allTombstones[d].filter((t) => t.id !== id);
+        this.saveTombstones(allTombstones);
+      }
+    },
+
     async addRecord(name, rawSessionData) {
       const domain = location.hostname;
       const records = this.getRecords(domain);
       const cipherObject = await CryptoEngine.encrypt(rawSessionData);
+      const now = Date.now();
 
       const newRecord = {
-        id: "sess_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7),
+        id: "sess_" + now + "_" + Math.random().toString(36).slice(2, 7),
         name: name.trim(),
         domain: domain,
         url: location.href,
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
+        createdAt: now,
+        updatedAt: now,
         summary: rawSessionData.summary,
         cipherData: cipherObject
       };
 
+      // 清除可能存在的同 ID 墓碑
+      this.clearTombstone(newRecord.id, domain);
+
       records.unshift(newRecord);
       this.saveRecords(records, domain);
       CryptoEngine.wipeMemory(rawSessionData);
+
+      // 触发自动同步调度
+      if (typeof GistSyncEngine !== "undefined" && GistSyncEngine.scheduleAutoSync) {
+        GistSyncEngine.scheduleAutoSync();
+      }
+
       return newRecord;
     },
 
@@ -1320,6 +1441,11 @@ async function initApp() {
         target.name = newName.trim();
         target.updatedAt = Date.now();
         this.saveRecords(records, d);
+
+        // 触发自动同步调度
+        if (typeof GistSyncEngine !== "undefined" && GistSyncEngine.scheduleAutoSync) {
+          GistSyncEngine.scheduleAutoSync();
+        }
         return true;
       }
       return false;
@@ -1332,6 +1458,13 @@ async function initApp() {
       records = records.filter((r) => r.id !== id);
       if (records.length !== initialLen) {
         this.saveRecords(records, d);
+        // 关键：持久化记录墓碑，保证云端在后续同步中同步清除该记录！
+        this.recordTombstone(id, d);
+
+        // 触发自动同步调度
+        if (typeof GistSyncEngine !== "undefined" && GistSyncEngine.scheduleAutoSync) {
+          GistSyncEngine.scheduleAutoSync();
+        }
         return true;
       }
       return false;
@@ -1345,7 +1478,6 @@ async function initApp() {
       for (const item of newRecords) {
         if (!item || !item.name || !item.cipherData) continue;
 
-        // 对比核心数据内容与 ID，已存在相同快照数据则直接跳过
         const itemCipherStr = typeof item.cipherData === "string" ? item.cipherData : JSON.stringify(item.cipherData);
         const isDuplicate = existing.some((r) => {
           if (!r || !r.cipherData) return false;
@@ -1358,19 +1490,90 @@ async function initApp() {
           continue;
         }
 
-        // 如果 ID 冲突则重新生成，避免重复
         const record = {
           ...item,
           id: item.id && !existing.some((r) => r.id === item.id) ? item.id : "sess_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7),
           importedAt: Date.now()
         };
+        this.clearTombstone(record.id, d);
+
         existing.unshift(record);
         count++;
       }
       if (count > 0) {
         this.saveRecords(existing, d);
+        if (typeof GistSyncEngine !== "undefined" && GistSyncEngine.scheduleAutoSync) {
+          GistSyncEngine.scheduleAutoSync();
+        }
       }
       return { count, skipped };
+    },
+
+    getAllDomains() {
+      const domains = new Set();
+      try {
+        if (typeof GM_listValues === "function") {
+          const keys = GM_listValues();
+          for (const key of keys) {
+            if (key.startsWith("SESSION_DATA_")) {
+              const dom = key.replace("SESSION_DATA_", "");
+              if (dom) domains.add(dom);
+            }
+          }
+        }
+      } catch (e) {}
+
+      domains.add(location.hostname);
+      const hostRules = getHostRules();
+      for (const h of hostRules) {
+        try {
+          const hostOnly = h.replace(/^https?:\/\//i, "").replace(/\/.*$/, "").replace(/^\*\./, "");
+          if (hostOnly && !hostOnly.includes("*")) {
+            domains.add(hostOnly);
+          }
+        } catch (e) {}
+      }
+      return Array.from(domains);
+    },
+
+    getAllLocalData() {
+      const domains = this.getAllDomains();
+      const recordsMap = {};
+      let totalCount = 0;
+      for (const d of domains) {
+        const recs = this.getRecords(d);
+        if (recs && recs.length > 0) {
+          recordsMap[d] = recs;
+          totalCount += recs.length;
+        }
+      }
+      return {
+        format: "LSM_GIST_SYNC",
+        version: "1.3.0",
+        lastSyncTime: GM_getValue("Config.sync_last_time", 0),
+        totalSnapshots: totalCount,
+        records: recordsMap,
+        tombstones: this.getTombstones()
+      };
+    },
+
+    applyMergedData(mergedRecordsMap, mergedTombstonesMap) {
+      if (mergedRecordsMap && typeof mergedRecordsMap === "object") {
+        for (const [domain, recs] of Object.entries(mergedRecordsMap)) {
+          this.saveRecords(Array.isArray(recs) ? recs : [], domain);
+        }
+      }
+      if (mergedTombstonesMap && typeof mergedTombstonesMap === "object") {
+        this.saveTombstones(mergedTombstonesMap);
+      }
+    },
+
+    overwriteAllLocalData(remoteRecordsMap, remoteTombstonesMap) {
+      const localDomains = this.getAllDomains();
+      for (const d of localDomains) {
+        this.saveRecords([], d);
+      }
+      this.applyMergedData(remoteRecordsMap, remoteTombstonesMap);
     },
 
     async getDecryptedSession(id, domain) {
@@ -1380,6 +1583,477 @@ async function initApp() {
       if (!target) throw new Error("未找到对应快照记录");
       const recDomain = target.domain || d;
       return await CryptoEngine.decrypt(target.cipherData, recDomain);
+    }
+  };
+
+  // -----------------------------------------------------------------------
+  // GitHub Gist 云同步引擎 (双向增量合并 / 墓碑判定 / 首次连接冲突协商)
+  // -----------------------------------------------------------------------
+  const GistSyncEngine = {
+    GIST_FILENAME: "web_snapshot_manager_sync.json",
+    syncLock: false,
+    autoSyncTimer: null,
+
+    httpRequest(options) {
+      return new Promise((resolve, reject) => {
+        const { method = "GET", url, headers = {}, data } = options;
+
+        if (typeof GM_xmlhttpRequest === "function") {
+          GM_xmlhttpRequest({
+            method,
+            url,
+            headers: {
+              "Accept": "application/vnd.github.v3+json",
+              "User-Agent": "WebSnapshotManager-Tampermonkey-Script",
+              ...headers
+            },
+            data: data ? (typeof data === "string" ? data : JSON.stringify(data)) : undefined,
+            timeout: 20000,
+            onload: (res) => {
+              try {
+                let parsed = null;
+                if (res.responseText) {
+                  try {
+                    parsed = JSON.parse(res.responseText);
+                  } catch (e) {
+                    parsed = res.responseText;
+                  }
+                }
+                if (res.status >= 200 && res.status < 300) {
+                  resolve({ status: res.status, data: parsed, headers: res.responseHeaders });
+                } else {
+                  const errorMsg = (parsed && parsed.message) || `HTTP ${res.status}: ${res.statusText || "请求失败"}`;
+                  reject(new Error(errorMsg));
+                }
+              } catch (err) {
+                reject(err);
+              }
+            },
+            onerror: () => reject(new Error("网络请求失败，请检查网络或代理设置")),
+            ontimeout: () => reject(new Error("网络请求超时 (20秒)"))
+          });
+        } else {
+          fetch(url, {
+            method,
+            headers: {
+              "Accept": "application/vnd.github.v3+json",
+              ...headers
+            },
+            body: data ? (typeof data === "string" ? data : JSON.stringify(data)) : undefined
+          })
+            .then(async (res) => {
+              const text = await res.text();
+              let parsed = null;
+              try {
+                parsed = JSON.parse(text);
+              } catch (e) {
+                parsed = text;
+              }
+              if (res.ok) {
+                resolve({ status: res.status, data: parsed });
+              } else {
+                reject(new Error((parsed && parsed.message) || `HTTP ${res.status}`));
+              }
+            })
+            .catch((e) => reject(new Error("Fetch 网络异常: " + e.message)));
+        }
+      });
+    },
+
+    getToken() {
+      return (GM_getValue("Config.sync_gist_token", "") || "").trim();
+    },
+
+    getGistId() {
+      return (GM_getValue("Config.sync_gist_id", "") || "").trim();
+    },
+
+    isAutoSyncEnabled() {
+      return Boolean(GM_getValue("Config.sync_auto", false));
+    },
+
+    getLastSyncTime() {
+      return GM_getValue("Config.sync_last_time", 0);
+    },
+
+    setSyncConfig(config) {
+      if (typeof config.token === "string") GM_setValue("Config.sync_gist_token", config.token.trim());
+      if (typeof config.gistId === "string") GM_setValue("Config.sync_gist_id", config.gistId.trim());
+      if (typeof config.autoSync === "boolean") GM_setValue("Config.sync_auto", config.autoSync);
+      if (typeof config.lastSyncTime === "number") GM_setValue("Config.sync_last_time", config.lastSyncTime);
+    },
+
+    async testConnection(customToken) {
+      const token = (customToken !== undefined ? customToken : this.getToken()).trim();
+      if (!token) throw new Error("请输入 GitHub Personal Access Token");
+
+      const res = await this.httpRequest({
+        method: "GET",
+        url: "https://api.github.com/user",
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+
+      return {
+        success: true,
+        login: res.data.login,
+        name: res.data.name || res.data.login,
+        avatar_url: res.data.avatar_url,
+        public_gists: res.data.public_gists,
+        private_gists: res.data.total_private_gists
+      };
+    },
+
+    async listUserGists(token) {
+      const t = (token || this.getToken()).trim();
+      if (!t) throw new Error("请先输入有效的 GitHub Token");
+
+      const res = await this.httpRequest({
+        method: "GET",
+        url: "https://api.github.com/gists?per_page=100",
+        headers: { "Authorization": `Bearer ${t}` }
+      });
+
+      const gists = Array.isArray(res.data) ? res.data : [];
+      return gists.map((g) => {
+        const files = g.files ? Object.keys(g.files) : [];
+        const isSnapshotGist = files.includes(this.GIST_FILENAME);
+        return {
+          id: g.id,
+          description: g.description || "（未命名 Gist）",
+          isPublic: g.public,
+          files: files,
+          isSnapshotGist: isSnapshotGist,
+          createdAt: g.created_at,
+          updatedAt: g.updated_at
+        };
+      });
+    },
+
+    async fetchRemoteGist(token, gistId) {
+      const t = (token || this.getToken()).trim();
+      const gid = (gistId || this.getGistId()).trim();
+      if (!t) throw new Error("未配置 GitHub Token");
+      if (!gid) throw new Error("未配置 Gist ID");
+
+      const res = await this.httpRequest({
+        method: "GET",
+        url: `https://api.github.com/gists/${gid}`,
+        headers: { "Authorization": `Bearer ${t}` }
+      });
+
+      const files = res.data.files || {};
+      const targetFile = files[this.GIST_FILENAME];
+      if (!targetFile) {
+        return {
+          exists: true,
+          isEmpty: true,
+          records: {},
+          tombstones: {},
+          lastSyncTime: 0,
+          rawGist: res.data
+        };
+      }
+
+      let contentObj = {};
+      try {
+        contentObj = JSON.parse(targetFile.content);
+      } catch (e) {
+        throw new Error("Gist 内快照数据 JSON 解析失败，格式可能已损坏");
+      }
+
+      return {
+        exists: true,
+        isEmpty: false,
+        records: (contentObj && typeof contentObj.records === "object") ? contentObj.records : {},
+        tombstones: (contentObj && typeof contentObj.tombstones === "object") ? contentObj.tombstones : {},
+        lastSyncTime: contentObj.lastSyncTime || 0,
+        version: contentObj.version || "1.0",
+        rawGist: res.data
+      };
+    },
+
+    async createGist(token, initialData) {
+      const t = (token || this.getToken()).trim();
+      if (!t) throw new Error("请先输入有效的 GitHub Token");
+
+      const dataToSave = initialData || DB.getAllLocalData();
+      dataToSave.lastSyncTime = Date.now();
+
+      const res = await this.httpRequest({
+        method: "POST",
+        url: "https://api.github.com/gists",
+        headers: {
+          "Authorization": `Bearer ${t}`,
+          "Content-Type": "application/json"
+        },
+        data: {
+          description: "网站快照存储与恢复助手 - 云同步备份数据 (WebSnapshotManager)",
+          public: false,
+          files: {
+            [this.GIST_FILENAME]: {
+              content: JSON.stringify(dataToSave, null, 2)
+            }
+          }
+        }
+      });
+
+      const newGistId = res.data.id;
+      if (!newGistId) throw new Error("创建 Gist 失败，GitHub 未返回 Gist ID");
+
+      this.setSyncConfig({ gistId: newGistId, lastSyncTime: Date.now() });
+      return { gistId: newGistId, htmlUrl: res.data.html_url };
+    },
+
+    async updateGist(token, gistId, dataToSave) {
+      const t = (token || this.getToken()).trim();
+      const gid = (gistId || this.getGistId()).trim();
+      if (!t) throw new Error("未配置 GitHub Token");
+      if (!gid) throw new Error("未配置 Gist ID");
+
+      const payload = {
+        ...dataToSave,
+        format: "LSM_GIST_SYNC",
+        version: "1.3.0",
+        lastSyncTime: Date.now()
+      };
+
+      await this.httpRequest({
+        method: "PATCH",
+        url: `https://api.github.com/gists/${gid}`,
+        headers: {
+          "Authorization": `Bearer ${t}`,
+          "Content-Type": "application/json"
+        },
+        data: {
+          description: "网站快照存储与恢复助手 - 云同步备份数据 (WebSnapshotManager)",
+          files: {
+            [this.GIST_FILENAME]: {
+              content: JSON.stringify(payload, null, 2)
+            }
+          }
+        }
+      });
+
+      this.setSyncConfig({ lastSyncTime: payload.lastSyncTime });
+      return payload;
+    },
+
+    mergeSnapshotData(localData, remoteData) {
+      const localRecs = localData.records || {};
+      const remoteRecs = remoteData.records || {};
+      const localTombstones = localData.tombstones || {};
+      const remoteTombstones = remoteData.tombstones || {};
+
+      const allDomains = new Set([
+        ...Object.keys(localRecs),
+        ...Object.keys(remoteRecs),
+        ...Object.keys(localTombstones),
+        ...Object.keys(remoteTombstones)
+      ]);
+
+      const mergedTombstones = {};
+      const expireThreshold = Date.now() - 30 * 24 * 3600 * 1000;
+
+      for (const d of allDomains) {
+        const lT = Array.isArray(localTombstones[d]) ? localTombstones[d] : [];
+        const rT = Array.isArray(remoteTombstones[d]) ? remoteTombstones[d] : [];
+        const tombMap = new Map();
+
+        for (const t of [...lT, ...rT]) {
+          if (!t || !t.id || !t.deletedAt) continue;
+          if (t.deletedAt <= expireThreshold) continue;
+
+          if (!tombMap.has(t.id) || tombMap.get(t.id).deletedAt < t.deletedAt) {
+            tombMap.set(t.id, { id: t.id, deletedAt: t.deletedAt });
+          }
+        }
+        if (tombMap.size > 0) {
+          mergedTombstones[d] = Array.from(tombMap.values());
+        }
+      }
+
+      const mergedRecords = {};
+      let totalMergedCount = 0;
+      let purgedByTombstoneCount = 0;
+      let addedFromRemoteCount = 0;
+      let updatedCount = 0;
+
+      for (const d of allDomains) {
+        const lList = Array.isArray(localRecs[d]) ? localRecs[d] : [];
+        const rList = Array.isArray(remoteRecs[d]) ? remoteRecs[d] : [];
+        const dTombs = mergedTombstones[d] || [];
+        const tombIdMap = new Map(dTombs.map((t) => [t.id, t.deletedAt]));
+
+        const recordMap = new Map();
+
+        const isDeleted = (rec) => {
+          if (!rec || !rec.id) return true;
+          if (tombIdMap.has(rec.id)) {
+            const delTime = tombIdMap.get(rec.id);
+            const recTime = rec.updatedAt || rec.createdAt || 0;
+            if (delTime >= recTime) {
+              return true;
+            }
+          }
+          return false;
+        };
+
+        for (const rec of lList) {
+          if (isDeleted(rec)) {
+            purgedByTombstoneCount++;
+            continue;
+          }
+          recordMap.set(rec.id, rec);
+        }
+
+        for (const rRec of rList) {
+          if (isDeleted(rRec)) {
+            purgedByTombstoneCount++;
+            continue;
+          }
+
+          if (!recordMap.has(rRec.id)) {
+            recordMap.set(rRec.id, rRec);
+            addedFromRemoteCount++;
+          } else {
+            const lRec = recordMap.get(rRec.id);
+            const lTime = lRec.updatedAt || lRec.createdAt || 0;
+            const rTime = rRec.updatedAt || rRec.createdAt || 0;
+
+            if (rTime > lTime) {
+              recordMap.set(rRec.id, rRec);
+              updatedCount++;
+            }
+          }
+        }
+
+        const finalDomainRecs = Array.from(recordMap.values()).sort(
+          (a, b) => (b.createdAt || b.updatedAt || 0) - (a.createdAt || a.updatedAt || 0)
+        );
+
+        if (finalDomainRecs.length > 0) {
+          mergedRecords[d] = finalDomainRecs;
+          totalMergedCount += finalDomainRecs.length;
+        }
+      }
+
+      return {
+        records: mergedRecords,
+        tombstones: mergedTombstones,
+        totalSnapshots: totalMergedCount,
+        stats: {
+          totalMergedCount,
+          purgedByTombstoneCount,
+          addedFromRemoteCount,
+          updatedCount
+        }
+      };
+    },
+
+    async twoWaySync(options = {}) {
+      const { silent = false } = options;
+
+      if (this.syncLock) {
+        if (!silent && typeof showToast === "function") {
+          showToast("已有同步任务正在进行中，请稍候...", "info");
+        }
+        return { success: false, reason: "locked" };
+      }
+
+      const token = this.getToken();
+      const gistId = this.getGistId();
+
+      if (!token) {
+        if (!silent && typeof showToast === "function") {
+          showToast("请先在云同步设置中配置 GitHub Token", "error");
+        }
+        return { success: false, reason: "no_token" };
+      }
+      if (!gistId) {
+        if (!silent && typeof showToast === "function") {
+          showToast("请先配置 Gist ID 或点击一键自动创建", "error");
+        }
+        return { success: false, reason: "no_gist_id" };
+      }
+
+      this.syncLock = true;
+      this.notifySyncStatus("syncing");
+
+      try {
+        if (!silent && typeof showToast === "function") {
+          showToast("正在与 GitHub Gist 双向同步...", "info");
+        }
+
+        const localData = DB.getAllLocalData();
+        const remoteData = await this.fetchRemoteGist(token, gistId);
+
+        const mergedResult = this.mergeSnapshotData(localData, remoteData);
+        DB.applyMergedData(mergedResult.records, mergedResult.tombstones);
+
+        await this.updateGist(token, gistId, {
+          records: mergedResult.records,
+          tombstones: mergedResult.tombstones,
+          totalSnapshots: mergedResult.totalSnapshots
+        });
+
+        this.notifySyncStatus("success");
+
+        if (typeof refreshList === "function") {
+          refreshList();
+        }
+
+        if (!silent && typeof showToast === "function") {
+          const s = mergedResult.stats;
+          let msg = `同步成功！当前全域共 ${mergedResult.totalSnapshots} 条快照`;
+          if (s.addedFromRemoteCount > 0 || s.purgedByTombstoneCount > 0) {
+            msg += ` (拉取 +${s.addedFromRemoteCount}，清理已删 -${s.purgedByTombstoneCount})`;
+          }
+          showToast(msg, "success");
+        }
+
+        return { success: true, result: mergedResult };
+      } catch (err) {
+        this.notifySyncStatus("error", err.message);
+        if (!silent && typeof showToast === "function") {
+          showToast(`同步失败: ${err.message}`, "error");
+        }
+        return { success: false, error: err };
+      } finally {
+        this.syncLock = false;
+      }
+    },
+
+    scheduleAutoSync() {
+      if (!this.isAutoSyncEnabled()) return;
+      const token = this.getToken();
+      const gistId = this.getGistId();
+      if (!token || !gistId) return;
+
+      if (this.autoSyncTimer) {
+        clearTimeout(this.autoSyncTimer);
+      }
+      this.autoSyncTimer = setTimeout(() => {
+        this.twoWaySync({ silent: true, checkConflict: false });
+      }, 2000);
+    },
+
+    checkSyncOnOpen() {
+      if (!this.isAutoSyncEnabled()) return;
+      const token = this.getToken();
+      const gistId = this.getGistId();
+      if (!token || !gistId) return;
+
+      const last = this.getLastSyncTime();
+      const now = Date.now();
+      if (!last || now - last > 5 * 60 * 1000) {
+        this.twoWaySync({ silent: true, checkConflict: false });
+      }
+    },
+
+    notifySyncStatus(status, errorMsg) {
+      if (typeof updateCloudStatusUI === "function") {
+        updateCloudStatusUI(status, errorMsg);
+      }
     }
   };
 
@@ -2650,6 +3324,152 @@ async function initApp() {
       line-height: 1.5;
     }
 
+    /* 云同步状态指示点与动效 */
+    .${uid}-dot-cloud {
+      background: #94a3b8;
+    }
+    .${uid}-dot-cloud.ok {
+      background: #10b981;
+      box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.2);
+    }
+    .${uid}-dot-cloud.syncing {
+      background: #3b82f6;
+      box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+      animation: ${uid}Pulse 1.2s infinite;
+    }
+    .${uid}-dot-cloud.warn {
+      background: #f59e0b;
+    }
+    .${uid}-dot-cloud.err {
+      background: #ef4444;
+    }
+
+    @keyframes ${uid}Pulse {
+      0% { opacity: 0.6; }
+      50% { opacity: 1; }
+      100% { opacity: 0.6; }
+    }
+
+    @keyframes ${uid}Spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+
+    .${uid}-icon-sync.spinning {
+      animation: ${uid}Spin 0.85s linear infinite;
+    }
+
+    /* 云同步专属抽屉弹窗 */
+    .${uid}-sync-dialog {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: #ffffff;
+      display: flex;
+      flex-direction: column;
+      padding: 16px 20px 16px;
+      gap: 12px;
+      transform: translateY(100%);
+      transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+      z-index: 10;
+      overflow: hidden;
+      box-sizing: border-box;
+    }
+    .${uid}-sync-dialog.open {
+      transform: translateY(0);
+    }
+    .${uid}-sync-dialog::-webkit-scrollbar {
+      display: none;
+      width: 0;
+      height: 0;
+    }
+
+    .${uid}-sync-body {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      touch-action: pan-y;
+      overscroll-behavior: contain;
+      flex: 1;
+      min-height: 0;
+      padding-right: 0;
+      box-sizing: border-box;
+      scrollbar-width: none; /* Firefox 隐藏滚动条 */
+      -ms-overflow-style: none; /* IE / Edge */
+    }
+    .${uid}-sync-body::-webkit-scrollbar {
+      display: none; /* Chrome / Safari / WebKit 隐藏滚动条 */
+      width: 0;
+      height: 0;
+    }
+
+    .${uid}-sync-status-card {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      padding: 12px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .${uid}-sync-toggle-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 12px;
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 10px;
+    }
+
+    /* Switch 切换开关 */
+    .${uid}-switch {
+      position: relative;
+      display: inline-block;
+      width: 40px;
+      height: 22px;
+      flex-shrink: 0;
+    }
+    .${uid}-switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+    .${uid}-slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: #cbd5e1;
+      transition: .2s;
+      border-radius: 22px;
+    }
+    .${uid}-slider:before {
+      position: absolute;
+      content: "";
+      height: 16px;
+      width: 16px;
+      left: 3px;
+      bottom: 3px;
+      background-color: white;
+      transition: .2s;
+      border-radius: 50%;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+    }
+    .${uid}-switch input:checked + .${uid}-slider {
+      background-color: #2563eb;
+    }
+    .${uid}-switch input:checked + .${uid}-slider:before {
+      transform: translateX(18px);
+    }
+
     /* Toast 提示 */
     .${uid}-toast {
       position: fixed;
@@ -2737,6 +3557,10 @@ async function initApp() {
           <span class="${uid}-dot ${isEncryptionEnabled() ? `${uid}-dot-green` : `${uid}-dot-amber`}"></span>
           <span>存储加密: ${isEncryptionEnabled() ? "AES-GCM" : "明文"}</span>
         </div>
+        <div class="${uid}-status-item" id="${uid}-status-cloud" style="cursor: pointer;" title="点击打开 GitHub Gist 云同步设置">
+          <span class="${uid}-dot ${uid}-dot-cloud" id="${uid}-dot-cloud"></span>
+          <span id="${uid}-status-cloud-text">☁️ 云同步: 未配置</span>
+        </div>
       </div>
 
       <!-- 操作工具栏 -->
@@ -2749,6 +3573,12 @@ async function initApp() {
               <polyline points="7 3 7 8 15 8"></polyline>
             </svg>
             <span>一键保存</span>
+          </button>
+          <button class="${uid}-btn ${uid}-btn-secondary" id="${uid}-btn-sync-toolbar" title="立即与 GitHub Gist 双向增量同步">
+            <svg class="${uid}-icon-sync" id="${uid}-sync-toolbar-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3L21.5 8M22 12.5a10 10 0 0 1-18.8 4.2L2.5 16"></path>
+            </svg>
+            <span>同步</span>
           </button>
           <button class="${uid}-btn ${uid}-btn-secondary" id="${uid}-btn-open-scan" title="扫码或导入快照数据">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -2780,6 +3610,17 @@ async function initApp() {
               </svg>
             </button>
             <div class="${uid}-dropdown-menu hidden" id="${uid}-dropdown-menu">
+              <div class="${uid}-dropdown-item ${uid}-item-accent" id="${uid}-btn-menu-cloud">
+                ☁️
+                <span>云同步设置 (Gist)</span>
+              </div>
+              <div class="${uid}-dropdown-item" id="${uid}-btn-menu-sync-now">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3L21.5 8M22 12.5a10 10 0 0 1-18.8 4.2L2.5 16"></path>
+                </svg>
+                <span>立即双向同步</span>
+              </div>
+              <div class="${uid}-dropdown-divider"></div>
               <div class="${uid}-dropdown-item ${uid}-item-accent" id="${uid}-btn-menu-scan">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <path d="M4 7V4h3M20 7V4h-3M4 17v3h3M20 17v3h-3M9 9h6v6H9z"></path>
@@ -3079,6 +3920,91 @@ async function initApp() {
           </div>
         </div>
       </div>
+
+      <!-- 云同步设置抽屉对话框 -->
+      <div class="${uid}-sync-dialog" id="${uid}-sync-dialog">
+        <div class="${uid}-dialog-header">
+          <div class="${uid}-dialog-title">
+            ☁️
+            <span>GitHub Gist 云同步设置</span>
+          </div>
+          <button class="${uid}-dialog-close" id="${uid}-btn-close-sync" title="关闭">✕</button>
+        </div>
+
+        <div class="${uid}-sync-body" id="${uid}-sync-body">
+          <!-- 状态卡片 -->
+          <div class="${uid}-sync-status-card" id="${uid}-sync-status-card">
+            <div style="display: flex; align-items: center; justify-content: space-between;">
+              <span style="font-weight: 700; font-size: 13px; color: #0f172a;" id="${uid}-sync-card-status-title">☁️ 未配置云同步</span>
+              <span class="${uid}-chip" id="${uid}-sync-card-badge" style="background:#f1f5f9;color:#64748b;">未连接</span>
+            </div>
+            <div style="font-size: 11px; color: #64748b; margin-top: 4px; line-height: 1.4;" id="${uid}-sync-card-desc">
+              配置 GitHub Token 和 Gist ID 后即可实现跨浏览器/多设备快照自动增量同步与安全备份。
+            </div>
+            <div style="font-size: 11px; color: #94a3b8; margin-top: 4px;" id="${uid}-sync-card-meta">
+              上次同步: 从未同步
+            </div>
+          </div>
+
+          <!-- Token 输入 -->
+          <div class="${uid}-input-group">
+            <div style="display: flex; align-items: center; justify-content: space-between;">
+              <label class="${uid}-input-label">GitHub Personal Access Token</label>
+              <a href="https://github.com/settings/tokens/new?scopes=gist&description=WebSnapshotManager" target="_blank" rel="noopener noreferrer" style="font-size: 11px; color: #2563eb; text-decoration: none;">🔑 获取 Token (勾选 gist)</a>
+            </div>
+            <div style="position: relative; display: flex; align-items: center;">
+              <input type="password" class="${uid}-input" id="${uid}-sync-input-token" placeholder="ghp_xxxxxxxxxxxxxxxxxxxx" style="padding-right: 36px;" />
+              <button type="button" id="${uid}-btn-toggle-token-eye" style="position: absolute; right: 8px; border: none; background: none; color: #64748b; cursor: pointer; font-size: 13px; padding: 2px;" title="显示/隐藏 Token">👁️</button>
+            </div>
+          </div>
+
+          <!-- Gist ID 输入、搜索与自动创建 -->
+          <div class="${uid}-input-group">
+            <div style="display: flex; align-items: center; justify-content: space-between;">
+              <label class="${uid}-input-label">Gist ID (留空可点击右侧自动创建)</label>
+              <button type="button" id="${uid}-btn-search-gists" style="font-size: 11px; color: #2563eb; background: none; border: none; cursor: pointer; padding: 0; display: inline-flex; align-items: center; gap: 3px; font-weight: 600;" title="从 GitHub 获取并搜索选择已有 Gist">
+                <span>📋 搜索/选择已有 Gist</span>
+              </button>
+            </div>
+            <div style="display: flex; gap: 6px;">
+              <input type="text" class="${uid}-input" id="${uid}-sync-input-gist-id" placeholder="例如：a1b2c3d4e5f6..." style="flex: 1;" />
+              <button class="${uid}-btn ${uid}-btn-secondary" id="${uid}-btn-auto-create-gist" style="white-space: nowrap;" title="在 GitHub 上自动创建一个私有 Gist 并填入此处">
+                🚀 自动创建 Gist
+              </button>
+            </div>
+          </div>
+
+          <!-- 操作与测试按钮组 -->
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+            <button class="${uid}-btn ${uid}-btn-secondary" id="${uid}-btn-test-token" style="width: 100%;">
+              🔍 测试连接与权限
+            </button>
+            <button class="${uid}-btn ${uid}-btn-primary" id="${uid}-btn-save-sync-config" style="width: 100%;">
+              💾 保存配置
+            </button>
+          </div>
+
+          <!-- 自动同步选项 -->
+          <div class="${uid}-sync-toggle-row">
+            <div>
+              <div style="font-size: 12.5px; font-weight: 600; color: #0f172a;">快照变更时自动同步</div>
+              <div style="font-size: 11px; color: #64748b;">本地保存、修改、删除快照后 2 秒防抖自动同步</div>
+            </div>
+            <label class="${uid}-switch">
+              <input type="checkbox" id="${uid}-sync-switch-auto" />
+              <span class="${uid}-slider"></span>
+            </label>
+          </div>
+
+          <!-- 主同步按钮 -->
+          <button class="${uid}-btn ${uid}-btn-primary" id="${uid}-btn-sync-now-drawer" style="width: 100%; padding: 10px 0; font-size: 13px;">
+            <svg class="${uid}-icon-sync" id="${uid}-sync-drawer-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3L21.5 8M22 12.5a10 10 0 0 1-18.8 4.2L2.5 16"></path>
+            </svg>
+            <span>🔄 立即双向增量同步</span>
+          </button>
+        </div>
+      </div>
     </div>
 
     <!-- Toast -->
@@ -3150,6 +4076,32 @@ async function initApp() {
   const btnScanRestoreNow = shadow.getElementById(`${uid}-btn-scan-restore-now`);
   const btnScanSaveDb = shadow.getElementById(`${uid}-btn-scan-save-db`);
   const btnScanRetry = shadow.getElementById(`${uid}-btn-scan-retry`);
+
+  // 云同步相关 DOM 元素引用
+  const statusCloud = shadow.getElementById(`${uid}-status-cloud`);
+  const dotCloud = shadow.getElementById(`${uid}-dot-cloud`);
+  const textCloud = shadow.getElementById(`${uid}-status-cloud-text`);
+  const btnSyncToolbar = shadow.getElementById(`${uid}-btn-sync-toolbar`);
+  const syncToolbarIcon = shadow.getElementById(`${uid}-sync-toolbar-icon`);
+  const syncDialog = shadow.getElementById(`${uid}-sync-dialog`);
+  const btnCloseSync = shadow.getElementById(`${uid}-btn-close-sync`);
+  const syncCardStatusTitle = shadow.getElementById(`${uid}-sync-card-status-title`);
+  const syncCardBadge = shadow.getElementById(`${uid}-sync-card-badge`);
+  const syncCardDesc = shadow.getElementById(`${uid}-sync-card-desc`);
+  const syncCardMeta = shadow.getElementById(`${uid}-sync-card-meta`);
+  const syncInputToken = shadow.getElementById(`${uid}-sync-input-token`);
+  const btnToggleTokenEye = shadow.getElementById(`${uid}-btn-toggle-token-eye`);
+  const syncInputGistId = shadow.getElementById(`${uid}-sync-input-gist-id`);
+  const btnSearchGists = shadow.getElementById(`${uid}-btn-search-gists`);
+  const btnAutoCreateGist = shadow.getElementById(`${uid}-btn-auto-create-gist`);
+  const btnTestToken = shadow.getElementById(`${uid}-btn-test-token`);
+  const btnSaveSyncConfig = shadow.getElementById(`${uid}-btn-save-sync-config`);
+  const syncSwitchAuto = shadow.getElementById(`${uid}-sync-switch-auto`);
+  const btnSyncNowDrawer = shadow.getElementById(`${uid}-btn-sync-now-drawer`);
+  const syncDrawerIcon = shadow.getElementById(`${uid}-sync-drawer-icon`);
+
+  const btnMenuCloud = shadow.getElementById(`${uid}-btn-menu-cloud`);
+  const btnMenuSyncNow = shadow.getElementById(`${uid}-btn-menu-sync-now`);
 
   let tempCapturedData = null;
   let toastTimer = null;
@@ -4269,6 +5221,251 @@ async function initApp() {
     showToast("快照解析成功，请选择操作", "success");
   }
 
+  // -----------------------------------------------------------------------
+  // 云同步状态 UI 刷新与抽屉交互
+  // -----------------------------------------------------------------------
+  function updateCloudStatusUI(status, errorMsg) {
+    const token = GistSyncEngine.getToken();
+    const gistId = GistSyncEngine.getGistId();
+    const lastTime = GistSyncEngine.getLastSyncTime();
+    const lastTimeStr = lastTime ? formatTime(lastTime) : "从未同步";
+
+    if (status === "syncing") {
+      if (dotCloud) dotCloud.className = `${uid}-dot ${uid}-dot-cloud syncing`;
+      if (textCloud) textCloud.textContent = "☁️ 云同步: 同步中...";
+      if (syncToolbarIcon) syncToolbarIcon.classList.add("spinning");
+      if (syncDrawerIcon) syncDrawerIcon.classList.add("spinning");
+      if (syncCardStatusTitle) syncCardStatusTitle.textContent = "☁️ 正在与 GitHub Gist 同步...";
+      if (syncCardBadge) {
+        syncCardBadge.textContent = "同步中";
+        syncCardBadge.style.cssText = "background:#dbeafe;color:#2563eb;";
+      }
+      if (syncCardDesc) syncCardDesc.textContent = "正在双向传输与合并全域快照数据，请稍候...";
+      if (syncCardMeta) syncCardMeta.textContent = `上次同步: ${lastTimeStr}`;
+      return;
+    }
+
+    if (syncToolbarIcon) syncToolbarIcon.classList.remove("spinning");
+    if (syncDrawerIcon) syncDrawerIcon.classList.remove("spinning");
+
+    if (status === "error") {
+      if (dotCloud) dotCloud.className = `${uid}-dot ${uid}-dot-cloud err`;
+      if (textCloud) textCloud.textContent = "☁️ 云同步: 异常";
+      if (syncCardStatusTitle) syncCardStatusTitle.textContent = "☁️ 云同步异常";
+      if (syncCardBadge) {
+        syncCardBadge.textContent = "连接失败";
+        syncCardBadge.style.cssText = "background:#fee2e2;color:#991b1b;";
+      }
+      if (syncCardDesc) syncCardDesc.textContent = `错误原因: ${errorMsg || "网络连接超时或 Token 无效"}`;
+      if (syncCardMeta) syncCardMeta.textContent = `上次同步: ${lastTimeStr}`;
+      return;
+    }
+
+    if (token && gistId) {
+      if (dotCloud) dotCloud.className = `${uid}-dot ${uid}-dot-cloud ok`;
+      if (textCloud) textCloud.textContent = "☁️ 云同步: 已连接";
+      if (syncCardStatusTitle) syncCardStatusTitle.textContent = "☁️ GitHub Gist 云同步就绪";
+      if (syncCardBadge) {
+        syncCardBadge.textContent = "已连接";
+        syncCardBadge.style.cssText = "background:#dcfce7;color:#166534;";
+      }
+      if (syncCardDesc) syncCardDesc.textContent = "已与 GitHub Gist 建立连接，支持双向智能增量合并与防抖自动同步。";
+      if (syncCardMeta) syncCardMeta.textContent = `上次同步: ${lastTimeStr}`;
+    } else if (token && !gistId) {
+      if (dotCloud) dotCloud.className = `${uid}-dot ${uid}-dot-cloud warn`;
+      if (textCloud) textCloud.textContent = "☁️ 云同步: 待绑定Gist";
+      if (syncCardStatusTitle) syncCardStatusTitle.textContent = "☁️ Token 已就绪，请绑定 Gist";
+      if (syncCardBadge) {
+        syncCardBadge.textContent = "待绑定";
+        syncCardBadge.style.cssText = "background:#fef3c7;color:#b45309;";
+      }
+      if (syncCardDesc) syncCardDesc.textContent = "已输入 Token，请点击下方「🚀 自动创建 Gist」或手动填入已有 Gist ID。";
+      if (syncCardMeta) syncCardMeta.textContent = `上次同步: ${lastTimeStr}`;
+    } else {
+      if (dotCloud) dotCloud.className = `${uid}-dot ${uid}-dot-cloud`;
+      if (textCloud) textCloud.textContent = "☁️ 云同步: 未配置";
+      if (syncCardStatusTitle) syncCardStatusTitle.textContent = "☁️ 未配置云同步";
+      if (syncCardBadge) {
+        syncCardBadge.textContent = "未连接";
+        syncCardBadge.style.cssText = "background:#f1f5f9;color:#64748b;";
+      }
+      if (syncCardDesc) syncCardDesc.textContent = "配置 GitHub Token 和 Gist ID 后即可实现跨浏览器/多设备快照自动增量同步与安全备份。";
+      if (syncCardMeta) syncCardMeta.textContent = `上次同步: ${lastTimeStr}`;
+    }
+  }
+
+  function openCloudSyncDialog() {
+    if (!syncDialog) return;
+    if (syncInputToken) syncInputToken.value = GistSyncEngine.getToken();
+    if (syncInputGistId) syncInputGistId.value = GistSyncEngine.getGistId();
+    if (syncSwitchAuto) syncSwitchAuto.checked = GistSyncEngine.isAutoSyncEnabled();
+    updateCloudStatusUI();
+    syncDialog.classList.add("open");
+  }
+
+  function closeCloudSyncDialog() {
+    if (syncDialog) {
+      syncDialog.classList.remove("open");
+    }
+  }
+
+  // 搜索并选择已有 Gist 模态框
+  async function showGistPickerModal(token) {
+    if (document.querySelector(".lsm-gist-picker-mask")) return;
+    ensureHostAnimationStyle();
+
+    const t = (token || (syncInputToken ? syncInputToken.value.trim() : "") || GistSyncEngine.getToken()).trim();
+    if (!t) {
+      showToast("请先在上方输入有效的 GitHub Token", "error");
+      if (syncInputToken) syncInputToken.focus();
+      return;
+    }
+
+    showToast("正在从 GitHub 获取 Gist 列表...", "info");
+
+    let gists = [];
+    try {
+      gists = await GistSyncEngine.listUserGists(t);
+    } catch (err) {
+      showToast(`获取 Gist 列表失败: ${err.message}`, "error");
+      return;
+    }
+
+    if (!gists.length) {
+      showToast("当前 GitHub 账号下未找到任何 Gist，请点击「🚀 自动创建 Gist」", "info");
+      return;
+    }
+
+    const mask = document.createElement("div");
+    mask.className = "lsm-dlg-mask lsm-gist-picker-mask";
+    mask.style.cssText =
+      "position:fixed;inset:0;z-index:2147483647;background:rgba(15,23,42,0.6);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);" +
+      "display:flex;align-items:center;justify-content:center;overscroll-behavior:contain;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;";
+    bindScrollLock(mask, null);
+
+    const box = document.createElement("div");
+    box.style.cssText =
+      "width:480px;max-width:calc(100vw - 32px);max-height:85vh;background:#ffffff;border-radius:18px;" +
+      "padding:20px 22px;box-shadow:0 20px 45px -10px rgba(15,23,42,0.25),0 0 0 1px rgba(15,23,42,0.06);box-sizing:border-box;" +
+      "display:flex;flex-direction:column;gap:12px;animation:lsmFadeIn .2s ease-out;";
+
+    const headerRow = document.createElement("div");
+    headerRow.style.cssText = "display:flex;align-items:center;justify-content:space-between;";
+    headerRow.innerHTML = `
+      <div style="display:flex;align-items:center;gap:6px;">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2">
+          <path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"></path>
+        </svg>
+        <span style="font-weight:700;font-size:15px;color:#0f172a;">选择已有 Gist 进行绑定 (${gists.length})</span>
+      </div>
+      <button class="lsm-picker-close-btn" style="border:none;background:none;font-size:16px;color:#94a3b8;cursor:pointer;padding:4px;" title="关闭">✕</button>
+    `;
+
+    const searchInput = document.createElement("input");
+    searchInput.type = "text";
+    searchInput.placeholder = "🔍 实时搜索 Gist 描述、文件名或 ID...";
+    searchInput.style.cssText =
+      "width:100%;box-sizing:border-box;padding:8px 12px;font-size:12.5px;border:1px solid #cbd5e1;border-radius:8px;outline:none;background:#f8fafc;";
+    searchInput.addEventListener("focus", () => searchInput.style.borderColor = "#2563eb");
+    searchInput.addEventListener("blur", () => searchInput.style.borderColor = "#cbd5e1");
+
+    const listContainer = document.createElement("div");
+    listContainer.style.cssText =
+      "flex:1;overflow-y:auto;max-height:50vh;display:flex;flex-direction:column;gap:8px;padding-right:2px;";
+    bindScrollLock(listContainer, null);
+
+    const close = () => mask.remove();
+    headerRow.querySelector(".lsm-picker-close-btn").addEventListener("click", close);
+
+    function renderGists(filterText = "") {
+      listContainer.innerHTML = "";
+      const q = filterText.toLowerCase().trim();
+
+      const filtered = gists.filter((g) => {
+        if (!q) return true;
+        return (
+          (g.description || "").toLowerCase().includes(q) ||
+          g.id.toLowerCase().includes(q) ||
+          g.files.some((f) => f.toLowerCase().includes(q))
+        );
+      });
+
+      if (!filtered.length) {
+        listContainer.innerHTML = `<div style="text-align:center;padding:24px;color:#94a3b8;font-size:12px;">未匹配到符合条件的 Gist</div>`;
+        return;
+      }
+
+      // 排序：包含快照备份文件 web_snapshot_manager_sync.json 的排最前
+      filtered.sort((a, b) => (b.isSnapshotGist ? 1 : 0) - (a.isSnapshotGist ? 1 : 0));
+
+      for (const item of filtered) {
+        const row = document.createElement("div");
+        row.style.cssText =
+          "border:1px solid " + (item.isSnapshotGist ? "#bfdbfe" : "#e2e8f0") + ";" +
+          "background:" + (item.isSnapshotGist ? "#eff6ff" : "#ffffff") + ";" +
+          "border-radius:10px;padding:10px 12px;cursor:pointer;transition:all 0.15s ease;display:flex;flex-direction:column;gap:4px;";
+
+        row.addEventListener("mouseenter", () => {
+          row.style.borderColor = "#2563eb";
+          row.style.transform = "translateY(-1px)";
+          row.style.boxShadow = "0 4px 12px rgba(37,99,235,0.12)";
+        });
+        row.addEventListener("mouseleave", () => {
+          row.style.borderColor = item.isSnapshotGist ? "#bfdbfe" : "#e2e8f0";
+          row.style.transform = "none";
+          row.style.boxShadow = "none";
+        });
+
+        const filesSummary = item.files.slice(0, 3).join(", ") + (item.files.length > 3 ? ` 等 ${item.files.length} 个文件` : "");
+        const updateDate = item.updatedAt ? formatTime(new Date(item.updatedAt).getTime()) : "-";
+
+        row.innerHTML = `
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;">
+            <div style="font-size:12.5px;font-weight:700;color:#0f172a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;">
+              ${item.isSnapshotGist ? "🌟 " : ""}${escapeHtml(item.description || "（未命名 Gist）")}
+            </div>
+            <span style="font-size:10.5px;padding:2px 6px;border-radius:4px;background:${item.isPublic ? "#fee2e2;color:#991b1b" : "#f1f5f9;color:#475569"};white-space:nowrap;">
+              ${item.isPublic ? "Public" : "Secret"}
+            </span>
+          </div>
+          ${item.isSnapshotGist ? `<div style="font-size:11px;color:#2563eb;font-weight:600;">✨ 包含快照备份文件 (${GistSyncEngine.GIST_FILENAME})</div>` : ""}
+          <div style="font-size:11px;color:#64748b;display:flex;align-items:center;justify-content:space-between;gap:4px;">
+            <span>包含文件: <code>${escapeHtml(filesSummary || "无")}</code></span>
+            <span>更新于: ${updateDate}</span>
+          </div>
+          <div style="font-size:10px;color:#94a3b8;font-family:monospace;">ID: ${item.id}</div>
+        `;
+
+        row.addEventListener("click", () => {
+          if (syncInputGistId) {
+            syncInputGistId.value = item.id;
+          }
+          GistSyncEngine.setSyncConfig({ token: t, gistId: item.id });
+          updateCloudStatusUI();
+          showToast(`已选择并绑定 Gist: ${item.description || item.id}`, "success");
+          close();
+        });
+
+        listContainer.appendChild(row);
+      }
+    }
+
+    searchInput.addEventListener("input", (e) => renderGists(e.target.value));
+
+    mask.addEventListener("click", (e) => {
+      if (e.target === mask) close();
+    });
+
+    renderGists("");
+
+    box.appendChild(headerRow);
+    box.appendChild(searchInput);
+    box.appendChild(listContainer);
+    mask.appendChild(box);
+    document.documentElement.appendChild(mask);
+    setTimeout(() => searchInput.focus(), 50);
+  }
+
   function openWindow() {
     if (ball) {
       ball.style.display = "none";
@@ -4278,6 +5475,10 @@ async function initApp() {
       win.style.display = "flex";
       win.classList.remove("hidden");
       refreshList();
+      updateCloudStatusUI();
+      if (typeof GistSyncEngine !== "undefined" && GistSyncEngine.checkSyncOnOpen) {
+        GistSyncEngine.checkSyncOnOpen();
+      }
     }
   }
 
@@ -4293,6 +5494,7 @@ async function initApp() {
     closeSaveDialog();
     closeQrCodeDialog();
     closeScanDialog();
+    closeCloudSyncDialog();
   }
 
   // -----------------------------------------------------------------------
@@ -4302,7 +5504,7 @@ async function initApp() {
   makeDraggable(win, header);
 
   // 阻止管理窗口与抽屉弹窗内滚动穿透到宿主网页（PC 滚轮 + 移动端触摸双重拦截）
-  bindScrollLock(win, `.${uid}-content, .${uid}-save-dialog, .${uid}-qr-dialog, .${uid}-scan-dialog`);
+  bindScrollLock(win, `.${uid}-content, .${uid}-save-dialog, .${uid}-qr-dialog, .${uid}-scan-dialog, .${uid}-sync-dialog, .${uid}-sync-body`);
   bindScrollLock(menuMask, null);
 
   // 悬浮球右上角菜单
@@ -4361,6 +5563,148 @@ async function initApp() {
     }
   });
   shadow.getElementById(`${uid}-btn-reload`).addEventListener("click", () => location.reload());
+
+  // 状态条云同步点击
+  if (statusCloud) {
+    statusCloud.addEventListener("click", () => {
+      openCloudSyncDialog();
+    });
+  }
+
+  // 工具栏同步按钮点击
+  if (btnSyncToolbar) {
+    btnSyncToolbar.addEventListener("click", async () => {
+      const token = GistSyncEngine.getToken();
+      const gistId = GistSyncEngine.getGistId();
+      if (!token || !gistId) {
+        openCloudSyncDialog();
+        showToast("请先配置 GitHub Token 和 Gist ID", "info");
+        return;
+      }
+      await GistSyncEngine.twoWaySync({ silent: false });
+    });
+  }
+
+  // 云同步抽屉内操作绑定
+  if (btnCloseSync) {
+    btnCloseSync.addEventListener("click", () => closeCloudSyncDialog());
+  }
+
+  if (btnToggleTokenEye && syncInputToken) {
+    btnToggleTokenEye.addEventListener("click", () => {
+      const isPwd = syncInputToken.type === "password";
+      syncInputToken.type = isPwd ? "text" : "password";
+      btnToggleTokenEye.textContent = isPwd ? "🙈" : "👁️";
+    });
+  }
+
+  if (btnTestToken) {
+    btnTestToken.addEventListener("click", async () => {
+      const val = syncInputToken ? syncInputToken.value.trim() : "";
+      if (!val) {
+        showToast("请先输入 GitHub Token", "error");
+        return;
+      }
+      try {
+        showToast("正在连接 GitHub API 验证 Token...", "info");
+        btnTestToken.disabled = true;
+        const res = await GistSyncEngine.testConnection(val);
+        showToast(`Token 验证成功！账号: @${res.login} (${res.name})`, "success");
+        GistSyncEngine.setSyncConfig({ token: val });
+        updateCloudStatusUI();
+      } catch (err) {
+        showToast(`连接失败: ${err.message}`, "error");
+        updateCloudStatusUI("error", err.message);
+      } finally {
+        btnTestToken.disabled = false;
+      }
+    });
+  }
+
+  if (btnSearchGists) {
+    btnSearchGists.addEventListener("click", () => {
+      showGistPickerModal();
+    });
+  }
+
+  if (btnAutoCreateGist) {
+    btnAutoCreateGist.addEventListener("click", async () => {
+      const tokenVal = syncInputToken ? syncInputToken.value.trim() : "";
+      if (!tokenVal) {
+        showToast("请先填写有效的 GitHub Token", "error");
+        if (syncInputToken) syncInputToken.focus();
+        return;
+      }
+      if (confirm("是否立即在 GitHub 上创建一个专属私有 Gist 用于存储快照同步数据？")) {
+        try {
+          showToast("正在 GitHub 创建 Secret Gist...", "info");
+          btnAutoCreateGist.disabled = true;
+          const res = await GistSyncEngine.createGist(tokenVal);
+          if (syncInputGistId) {
+            syncInputGistId.value = res.gistId;
+          }
+          GistSyncEngine.setSyncConfig({ token: tokenVal, gistId: res.gistId });
+          showToast("Gist 创建并绑定成功！", "success");
+          updateCloudStatusUI();
+        } catch (err) {
+          showToast(`创建 Gist 失败: ${err.message}`, "error");
+        } finally {
+          btnAutoCreateGist.disabled = false;
+        }
+      }
+    });
+  }
+
+  if (btnSaveSyncConfig) {
+    btnSaveSyncConfig.addEventListener("click", () => {
+      const tokenVal = syncInputToken ? syncInputToken.value.trim() : "";
+      const gistVal = syncInputGistId ? syncInputGistId.value.trim() : "";
+      const autoVal = syncSwitchAuto ? syncSwitchAuto.checked : false;
+
+      GistSyncEngine.setSyncConfig({
+        token: tokenVal,
+        gistId: gistVal,
+        autoSync: autoVal
+      });
+      updateCloudStatusUI();
+      showToast("云同步配置已保存！", "success");
+    });
+  }
+
+  if (syncSwitchAuto) {
+    syncSwitchAuto.addEventListener("change", (e) => {
+      const enabled = e.target.checked;
+      GistSyncEngine.setSyncConfig({ autoSync: enabled });
+      showToast(enabled ? "已开启快照变更时自动同步 (2秒防抖)" : "已关闭快照自动同步", "info");
+    });
+  }
+
+  if (btnSyncNowDrawer) {
+    btnSyncNowDrawer.addEventListener("click", async () => {
+      const tokenVal = syncInputToken ? syncInputToken.value.trim() : "";
+      const gistVal = syncInputGistId ? syncInputGistId.value.trim() : "";
+      if (!tokenVal || !gistVal) {
+        showToast("请先填写并保存 Token 与 Gist ID", "error");
+        return;
+      }
+      GistSyncEngine.setSyncConfig({ token: tokenVal, gistId: gistVal });
+      await GistSyncEngine.twoWaySync({ silent: false });
+    });
+  }
+
+  // 更多操作下拉菜单中的云同步项
+  if (btnMenuCloud) {
+    btnMenuCloud.addEventListener("click", () => {
+      dropdownMenu.classList.add("hidden");
+      openCloudSyncDialog();
+    });
+  }
+  if (btnMenuSyncNow) {
+    btnMenuSyncNow.addEventListener("click", async () => {
+      dropdownMenu.classList.add("hidden");
+      await GistSyncEngine.twoWaySync({ silent: false });
+    });
+  }
 
   // 搜索过滤框事件绑定
   const searchInput = shadow.getElementById(`${uid}-search-input`);
@@ -4965,6 +6309,8 @@ async function initApp() {
     ball,
     win,
     openWindow,
-    closeWindow
+    closeWindow,
+    openCloudSyncDialog,
+    closeCloudSyncDialog
   };
 }
