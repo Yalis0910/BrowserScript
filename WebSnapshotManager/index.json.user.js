@@ -2963,6 +2963,7 @@ async function initApp() {
       border: 1px solid var(--lsm-border, #e3e1db);
       border-radius: var(--lsm-radius-window, 16px);
       overflow: hidden;
+      overflow: clip;
       display: flex;
       flex-direction: column;
       box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.18), 0 1px 3px rgba(0, 0, 0, 0.04);
@@ -3520,7 +3521,7 @@ async function initApp() {
       gap: 8px;
     }
 
-    /* 抽屉基础样式 */
+    /* 抽屉基础样式 (未打开时强制 display: none，彻底杜绝外层窗口滚动穿透或焦点跳转导致的错位) */
     .${uid}-save-dialog,
     .${uid}-qr-dialog,
     .${uid}-scan-dialog,
@@ -3532,7 +3533,7 @@ async function initApp() {
       right: 0;
       bottom: 0;
       background: var(--lsm-bg-paper, #faf9f5);
-      display: flex;
+      display: none;
       flex-direction: column;
       padding: 20px;
       gap: 14px;
@@ -3545,13 +3546,16 @@ async function initApp() {
       touch-action: pan-y;
       border-top: 1px solid var(--lsm-border, #e3e1db);
       box-sizing: border-box;
+      pointer-events: none;
     }
     .${uid}-save-dialog.open,
     .${uid}-qr-dialog.open,
     .${uid}-scan-dialog.open,
     .${uid}-sync-dialog.open,
     .${uid}-theme-dialog.open {
+      display: flex !important;
       transform: translateY(0);
+      pointer-events: auto;
     }
     .${uid}-dialog-header,
     .${uid}-save-dialog-title {
@@ -5341,14 +5345,19 @@ async function initApp() {
   }
 
   async function openSaveDialog() {
+    closeAllDrawers();
+    if (win) win.scrollTop = 0;
+    if (saveDialog) saveDialog.scrollTop = 0;
     inputName.value = getDefaultName();
     previewBox.innerHTML = `<span style="color: #787670; font-size: 12px;">正在扫描当前快照...</span>`;
     saveDialog.classList.add("open");
 
-    // 自动聚焦并全选输入框
+    // 自动聚焦并全选输入框 (防止浏览器因授权弹窗切焦点产生意外滚动)
     setTimeout(() => {
-      inputName.focus();
-      inputName.select();
+      if (saveDialog && saveDialog.classList.contains("open") && inputName) {
+        inputName.focus({ preventScroll: true });
+        inputName.select();
+      }
     }, 50);
 
     try {
@@ -5377,8 +5386,13 @@ async function initApp() {
           ${isTooLarge ? '<span style="color: #e11d48; font-weight: 600;">⚠️ 快照体积偏大 (>1.5MB)</span>' : '<span style="color: #10b981;">✓ 状态良好</span>'}
         </div>
       `;
+
+      // 授权弹窗关闭后重新确保顶栏与抽屉位置平正
+      if (win) win.scrollTop = 0;
+      if (saveDialog) saveDialog.scrollTop = 0;
     } catch (e) {
       previewBox.innerHTML = `<span style="color: #dc2626; font-size: 12px;">扫描异常: ${e.message}</span>`;
+      if (win) win.scrollTop = 0;
     }
   }
 
@@ -6076,6 +6090,9 @@ async function initApp() {
 
   function openCloudSyncDialog() {
     if (!syncDialog) return;
+    closeAllDrawers();
+    if (win) win.scrollTop = 0;
+    if (syncDialog) syncDialog.scrollTop = 0;
     if (syncInputToken) syncInputToken.value = GistSyncEngine.getToken();
     if (syncInputGistId) syncInputGistId.value = GistSyncEngine.getGistId();
     if (syncSwitchAuto) syncSwitchAuto.checked = GistSyncEngine.isAutoSyncEnabled();
@@ -6593,6 +6610,12 @@ async function initApp() {
   // -----------------------------------------------------------------------
   makeDraggable(ball, ball, () => openWindow());
   makeDraggable(win, header);
+
+  // 严格锁定外层管理窗口容器自身的滚动偏移（防止因权限弹窗/焦点切换导致窗口内内容整体错位）
+  win.addEventListener("scroll", () => {
+    if (win.scrollTop !== 0) win.scrollTop = 0;
+    if (win.scrollLeft !== 0) win.scrollLeft = 0;
+  }, { passive: true });
 
   // 阻止管理窗口与抽屉弹窗内滚动穿透到宿主网页（PC 滚轮 + 移动端触摸双重拦截）
   bindScrollLock(win, `.${uid}-content, .${uid}-save-dialog, .${uid}-qr-dialog, .${uid}-scan-dialog, .${uid}-sync-dialog, .${uid}-sync-body, .${uid}-theme-dialog, .${uid}-theme-body`);
