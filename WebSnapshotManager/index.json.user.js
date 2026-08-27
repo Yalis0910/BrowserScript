@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         网站快照存储与恢复助手
 // @namespace    https://github.com/moyefu/BrowserScript/WebSnapshotManager
-// @version      1.4.1
+// @version      1.4.2
 // @description  针对指定网站实现快照（Cookie、LocalStorage、SessionStorage）的一键存储、命名、加密备份、GitHub Gist云同步、二维码生成/扫码与一键恢复
 // @author       MOYEFU
 // @icon         https://pic1.imgdb.cn/i/034D4F8VwYLLoU73kkQs3l.gif
@@ -66,6 +66,123 @@ Config:
     type: text
     default: ""
 ==/UserConfig== */
+
+// =========================================================================
+// 🛡️ Trusted Types 策略引擎与安全 HTML 注入组件
+// 兼容严格 CSP（如 GitHub, Google 等 require-trusted-types-for 'script' 策略）
+// =========================================================================
+let appTrustedPolicy = null;
+(function initTrustedTypesPolicy() {
+  const ttFactory = (typeof window !== "undefined" && window.trustedTypes) ||
+                    (typeof unsafeWindow !== "undefined" && unsafeWindow.trustedTypes);
+  if (ttFactory && typeof ttFactory.createPolicy === "function") {
+    // 候选策略名称列表（兼容不同网站 CSP 白名单限制，如 Google、Next.js、Angular、通用 default 等）
+    const CANDIDATE_NAMES = [
+      "default",
+      "snapshotPolicy",
+      "webSnapshotManager",
+      "trusted-types",
+      "goog#html",
+      "dompurify",
+      "angular#unsafe-bypass",
+      "nextjs#html",
+      "webpack#html",
+      "bypass"
+    ];
+
+    for (const name of CANDIDATE_NAMES) {
+      if (appTrustedPolicy) break;
+      try {
+        appTrustedPolicy = ttFactory.createPolicy(name, {
+          createHTML: (string) => string,
+          createScript: (string) => string,
+          createScriptURL: (string) => string,
+        });
+      } catch (e) {}
+    }
+
+    if (!appTrustedPolicy && ttFactory.defaultPolicy) {
+      appTrustedPolicy = ttFactory.defaultPolicy;
+    }
+  }
+})();
+
+function safeHTML(html) {
+  if (appTrustedPolicy && typeof appTrustedPolicy.createHTML === "function") {
+    try {
+      return appTrustedPolicy.createHTML(html);
+    } catch (e) {
+      return html;
+    }
+  }
+  return html;
+}
+
+function setSafeInnerHTML(element, html) {
+  if (!element) return;
+  const safeContent = safeHTML(html);
+  try {
+    element.innerHTML = safeContent;
+    return;
+  } catch (err) {}
+
+  try {
+    const range = document.createRange();
+    range.selectNode(element);
+    const fragment = range.createContextualFragment(safeContent);
+    element.replaceChildren(fragment);
+    return;
+  } catch (err) {}
+
+  try {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(safeContent, "text/html");
+    element.replaceChildren(...doc.body.childNodes);
+    return;
+  } catch (err) {}
+}
+
+// 针对 Userscript 环境自动劫持并重写 Element.prototype.innerHTML 赋值
+(function patchInnerHTMLSetter() {
+  try {
+    if (typeof Element === "undefined" || !Element.prototype) return;
+    const originalDescriptor = Object.getOwnPropertyDescriptor(Element.prototype, "innerHTML");
+    if (originalDescriptor && originalDescriptor.set) {
+      Object.defineProperty(Element.prototype, "innerHTML", {
+        set: function (val) {
+          const safeVal = safeHTML(val);
+          try {
+            return originalDescriptor.set.call(this, safeVal);
+          } catch (err) {
+            try {
+              const range = document.createRange();
+              range.selectNode(this);
+              const fragment = range.createContextualFragment(safeVal);
+              this.replaceChildren(fragment);
+              return;
+            } catch (e2) {
+              try {
+                const parser = new DOMParser();
+                const doc = parser.parseFromString(safeVal, "text/html");
+                this.replaceChildren(...doc.body.childNodes);
+                return;
+              } catch (e3) {
+                throw err;
+              }
+            }
+          }
+        },
+        get: function () {
+          return originalDescriptor.get.call(this);
+        },
+        configurable: true,
+        enumerable: true
+      });
+    }
+  } catch (e) {
+    // 若环境禁止重定义属性，setSafeInnerHTML 显式调用依然生效
+  }
+})();
 
 // 全局暴露的 UI 实例，供菜单命令与外部调度使用
 let LSM_UI = null;
@@ -4147,7 +4264,7 @@ async function initApp() {
   const wrapper = document.createElement("div");
   wrapper.id = `${uid}-root`;
   wrapper.className = `${uid}-root`;
-  wrapper.innerHTML = `
+  setSafeInnerHTML(wrapper, `
     <!-- 悬浮球 -->
     <div id="${uid}-ball" title="快照管理助手">
       <span class="${uid}-ball-close" title="更多选项">×</span>
@@ -4752,7 +4869,7 @@ async function initApp() {
 
     <!-- Toast -->
     <div class="${uid}-toast" id="${uid}-toast"></div>
-  `;
+  `);
   shadow.appendChild(wrapper);
 
   // -----------------------------------------------------------------------
