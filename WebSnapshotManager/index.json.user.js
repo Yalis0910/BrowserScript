@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         网站快照存储与恢复助手
 // @namespace    https://github.com/moyefu/BrowserScript/WebSnapshotManager
-// @version      1.3.0
+// @version      1.4.0
 // @description  针对指定网站实现快照（Cookie、LocalStorage、SessionStorage）的一键存储、命名、加密备份、GitHub Gist云同步、二维码生成/扫码与一键恢复
 // @author       MOYEFU
 // @icon         https://pic1.imgdb.cn/i/034D4F8VwYLLoU73kkQs3l.gif
@@ -70,6 +70,504 @@ Config:
 // 全局暴露的 UI 实例，供菜单命令与外部调度使用
 let LSM_UI = null;
 
+// =========================================================================
+  // 主题系统引擎 (ThemeEngine)
+  // 支持结构化 JSON 封装、导入/导出、实时 CSS 变量无刷新换肤与自定义定制
+  // =========================================================================
+  const ThemeEngine = {
+    SCHEMA_TYPE: "LSM_THEME",
+    SCHEMA_VERSION: "1.0.0",
+    DEFAULT_THEME_ID: "yohaku",
+    _shadow: null,
+    _uid: null,
+
+    // 内置官方预设主题库
+    BUILTIN_THEMES: [
+      {
+        type: "LSM_THEME",
+        version: "1.0.0",
+        id: "yohaku",
+        name: "Yohaku (余白)",
+        description: "基于 Innei Yohaku 设计体系的米白纸张与梅红质感主题",
+        isBuiltin: true,
+        tokens: {
+          accent: "#c56473",
+          accentBg: "rgba(197, 100, 115, 0.08)",
+          accentBorder: "rgba(197, 100, 115, 0.3)",
+          accentHoverBg: "rgba(197, 100, 115, 0.14)",
+          accentGlow: "rgba(197, 100, 115, 0.12)",
+          bgPaper: "#faf9f5",
+          bgHeader: "#f0efeb",
+          bgCard: "#ffffff",
+          bgList: "#f9f8f5",
+          bgHover: "#f0efeb",
+          bgActiveCard: "linear-gradient(180deg, rgba(94, 159, 126, 0.06) 0%, #ffffff 60%)",
+          borderLight: "#e3e1db",
+          borderHover: "#d0cec6",
+          textPrimary: "#24231f",
+          textSecondary: "#5c5a55",
+          textMuted: "#787670",
+          textPlaceholder: "#a8a69f",
+          colorSuccess: "#5e9f7e",
+          bgSuccess: "rgba(94, 159, 126, 0.08)",
+          borderSuccess: "rgba(94, 159, 126, 0.25)",
+          colorWarning: "#a87a3d",
+          bgWarning: "rgba(168, 122, 61, 0.08)",
+          borderWarning: "rgba(168, 122, 61, 0.2)",
+          colorInfo: "#3d6896",
+          bgInfo: "rgba(61, 104, 150, 0.08)",
+          borderInfo: "rgba(61, 104, 150, 0.2)",
+          colorDanger: "#a64953",
+          bgDanger: "rgba(166, 73, 83, 0.08)",
+          borderDanger: "rgba(166, 73, 83, 0.25)",
+          fontFamily: "system-ui, -apple-system, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans SC', sans-serif",
+          radiusWindow: "16px",
+          radiusCard: "12px",
+          radiusBtn: "8px"
+        }
+      },
+      {
+        type: "LSM_THEME",
+        version: "1.0.0",
+        id: "classic_blue",
+        name: "Classic Blue (经典科技蓝)",
+        description: "清晰现代的科技蓝调搭配极简冷灰界面",
+        isBuiltin: true,
+        tokens: {
+          accent: "#2563eb",
+          accentBg: "rgba(37, 99, 235, 0.08)",
+          accentBorder: "rgba(37, 99, 235, 0.3)",
+          accentHoverBg: "rgba(37, 99, 235, 0.14)",
+          accentGlow: "rgba(37, 99, 235, 0.12)",
+          bgPaper: "#f8fafc",
+          bgHeader: "#f1f5f9",
+          bgCard: "#ffffff",
+          bgList: "#f8fafc",
+          bgHover: "#f1f5f9",
+          bgActiveCard: "linear-gradient(180deg, rgba(22, 163, 74, 0.06) 0%, #ffffff 60%)",
+          borderLight: "#e2e8f0",
+          borderHover: "#cbd5e1",
+          textPrimary: "#0f172a",
+          textSecondary: "#334155",
+          textMuted: "#64748b",
+          textPlaceholder: "#94a3b8",
+          colorSuccess: "#16a34a",
+          bgSuccess: "rgba(22, 163, 74, 0.08)",
+          borderSuccess: "rgba(22, 163, 74, 0.25)",
+          colorWarning: "#d97706",
+          bgWarning: "rgba(217, 119, 6, 0.08)",
+          borderWarning: "rgba(217, 119, 6, 0.2)",
+          colorInfo: "#0284c7",
+          bgInfo: "rgba(2, 132, 199, 0.08)",
+          borderInfo: "rgba(2, 132, 199, 0.2)",
+          colorDanger: "#dc2626",
+          bgDanger: "rgba(220, 38, 38, 0.08)",
+          borderDanger: "rgba(220, 38, 38, 0.25)",
+          fontFamily: "system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
+          radiusWindow: "16px",
+          radiusCard: "12px",
+          radiusBtn: "8px"
+        }
+      },
+      {
+        type: "LSM_THEME",
+        version: "1.0.0",
+        id: "obsidian_dark",
+        name: "Obsidian Dark (曜石暗夜)",
+        description: "深色沉浸护眼主题，曜石黑灰与高亮翡翠绿点缀",
+        isBuiltin: true,
+        tokens: {
+          accent: "#10b981",
+          accentBg: "rgba(16, 185, 129, 0.12)",
+          accentBorder: "rgba(16, 185, 129, 0.35)",
+          accentHoverBg: "rgba(16, 185, 129, 0.2)",
+          accentGlow: "rgba(16, 185, 129, 0.15)",
+          bgPaper: "#141312",
+          bgHeader: "#1f1e1c",
+          bgCard: "#1f1e1c",
+          bgList: "#141312",
+          bgHover: "#2a2926",
+          bgActiveCard: "linear-gradient(180deg, rgba(16, 185, 129, 0.12) 0%, #1f1e1c 60%)",
+          borderLight: "#2f2d29",
+          borderHover: "#474540",
+          textPrimary: "#f5f4f0",
+          textSecondary: "#d0cec6",
+          textMuted: "#a8a69f",
+          textPlaceholder: "#787670",
+          colorSuccess: "#10b981",
+          bgSuccess: "rgba(16, 185, 129, 0.12)",
+          borderSuccess: "rgba(16, 185, 129, 0.3)",
+          colorWarning: "#f59e0b",
+          bgWarning: "rgba(245, 158, 11, 0.12)",
+          borderWarning: "rgba(245, 158, 11, 0.3)",
+          colorInfo: "#38bdf8",
+          bgInfo: "rgba(56, 189, 248, 0.12)",
+          borderInfo: "rgba(56, 189, 248, 0.3)",
+          colorDanger: "#f43f5e",
+          bgDanger: "rgba(244, 63, 94, 0.12)",
+          borderDanger: "rgba(244, 63, 94, 0.3)",
+          fontFamily: "system-ui, -apple-system, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif",
+          radiusWindow: "16px",
+          radiusCard: "12px",
+          radiusBtn: "8px"
+        }
+      },
+      {
+        type: "LSM_THEME",
+        version: "1.0.0",
+        id: "sakura_pink",
+        name: "Sakura Pink (春櫻粉紫)",
+        description: "温柔优雅的春日樱花色调，粉白相间与柔润光泽",
+        isBuiltin: true,
+        tokens: {
+          accent: "#e11d48",
+          accentBg: "rgba(225, 29, 72, 0.08)",
+          accentBorder: "rgba(225, 29, 72, 0.28)",
+          accentHoverBg: "rgba(225, 29, 72, 0.14)",
+          accentGlow: "rgba(225, 29, 72, 0.1)",
+          bgPaper: "#fff5f6",
+          bgHeader: "#ffe4e6",
+          bgCard: "#ffffff",
+          bgList: "#fff1f3",
+          bgHover: "#ffe4e6",
+          bgActiveCard: "linear-gradient(180deg, rgba(225, 29, 72, 0.06) 0%, #ffffff 60%)",
+          borderLight: "#fecdd3",
+          borderHover: "#fda4af",
+          textPrimary: "#2b1216",
+          textSecondary: "#612933",
+          textMuted: "#9f4a59",
+          textPlaceholder: "#be7683",
+          colorSuccess: "#059669",
+          bgSuccess: "rgba(5, 150, 105, 0.08)",
+          borderSuccess: "rgba(5, 150, 105, 0.2)",
+          colorWarning: "#d97706",
+          bgWarning: "rgba(217, 119, 6, 0.08)",
+          borderWarning: "rgba(217, 119, 6, 0.2)",
+          colorInfo: "#7c3aed",
+          bgInfo: "rgba(124, 58, 237, 0.08)",
+          borderInfo: "rgba(124, 58, 237, 0.2)",
+          colorDanger: "#e11d48",
+          bgDanger: "rgba(225, 29, 72, 0.08)",
+          borderDanger: "rgba(225, 29, 72, 0.25)",
+          fontFamily: "system-ui, -apple-system, 'PingFang SC', sans-serif",
+          radiusWindow: "18px",
+          radiusCard: "14px",
+          radiusBtn: "10px"
+        }
+      },
+      {
+        type: "LSM_THEME",
+        version: "1.0.0",
+        id: "matcha_green",
+        name: "Matcha Green (宇治抹茶)",
+        description: "清幽宁静的和风抹茶绿，淡雅米绿与墨茶文字",
+        isBuiltin: true,
+        tokens: {
+          accent: "#15803d",
+          accentBg: "rgba(21, 128, 61, 0.08)",
+          accentBorder: "rgba(21, 128, 61, 0.28)",
+          accentHoverBg: "rgba(21, 128, 61, 0.14)",
+          accentGlow: "rgba(21, 128, 61, 0.1)",
+          bgPaper: "#f9fcf8",
+          bgHeader: "#edf7eb",
+          bgCard: "#ffffff",
+          bgList: "#f4faf2",
+          bgHover: "#e8f5e5",
+          bgActiveCard: "linear-gradient(180deg, rgba(21, 128, 61, 0.06) 0%, #ffffff 60%)",
+          borderLight: "#d6ebd3",
+          borderHover: "#b6deb0",
+          textPrimary: "#19281a",
+          textSecondary: "#3d543f",
+          textMuted: "#678469",
+          textPlaceholder: "#93ac95",
+          colorSuccess: "#15803d",
+          bgSuccess: "rgba(21, 128, 61, 0.08)",
+          borderSuccess: "rgba(21, 128, 61, 0.2)",
+          colorWarning: "#b45309",
+          bgWarning: "rgba(180, 83, 9, 0.08)",
+          borderWarning: "rgba(180, 83, 9, 0.2)",
+          colorInfo: "#0369a1",
+          bgInfo: "rgba(3, 105, 161, 0.08)",
+          borderInfo: "rgba(3, 105, 161, 0.2)",
+          colorDanger: "#b91c1c",
+          bgDanger: "rgba(185, 28, 28, 0.08)",
+          borderDanger: "rgba(185, 28, 28, 0.25)",
+          fontFamily: "system-ui, -apple-system, 'PingFang SC', sans-serif",
+          radiusWindow: "16px",
+          radiusCard: "12px",
+          radiusBtn: "8px"
+        }
+      }
+    ],
+
+    // 获取用户存储的所有自定义主题
+    getCustomThemes() {
+      try {
+        const raw = GM_getValue("Config.custom_themes", {});
+        return typeof raw === "object" && raw !== null ? raw : {};
+      } catch (e) {
+        return {};
+      }
+    },
+
+    // 保存自定义主题字典
+    saveCustomThemesMap(map) {
+      try {
+        GM_setValue("Config.custom_themes", map || {});
+      } catch (e) {}
+    },
+
+    // 获取当前全部可用主题列表（内置 + 自定义）
+    getAllThemes() {
+      const customs = Object.values(this.getCustomThemes());
+      return [...this.BUILTIN_THEMES, ...customs];
+    },
+
+    // 获取指定 ID 的主题对象
+    getThemeById(id) {
+      if (!id) return this.BUILTIN_THEMES[0];
+      const found = this.getAllThemes().find((t) => t.id === id);
+      return found || this.BUILTIN_THEMES[0];
+    },
+
+    // 获取当前生效的主题对象
+    getActiveTheme() {
+      const activeId = GM_getValue("Config.active_theme_id", this.DEFAULT_THEME_ID);
+      return this.getThemeById(activeId);
+    },
+
+    // 设置当前生效的主题 ID 并持久化
+    setActiveTheme(id) {
+      const theme = this.getThemeById(id);
+      GM_setValue("Config.active_theme_id", theme.id);
+      this.applyTheme(theme);
+      return theme;
+    },
+
+    // 一键重置为默认 Yohaku 主题
+    resetToDefault() {
+      return this.setActiveTheme(this.DEFAULT_THEME_ID);
+    },
+
+    // 绑定当前活动 UI 的 Shadow Root 与 UID
+    bindShadow(shadowRoot, uid) {
+      this._shadow = shadowRoot;
+      this._uid = uid;
+      this.applyTheme();
+    },
+
+    // 校验与规范化主题数据
+    validateAndNormalizeTheme(input) {
+      if (!input || typeof input !== "object") {
+        throw new Error("主题数据必须为有效的 JSON 对象");
+      }
+      if (input.type && input.type !== this.SCHEMA_TYPE) {
+        throw new Error("非法的主题数据格式类型: " + input.type + "，期望为 " + this.SCHEMA_TYPE);
+      }
+
+      const defaultTokens = this.BUILTIN_THEMES[0].tokens;
+      const inputTokens = input.tokens || {};
+
+      const cleanTokens = {};
+      for (const [key, defVal] of Object.entries(defaultTokens)) {
+        cleanTokens[key] = typeof inputTokens[key] === "string" && inputTokens[key].trim() ? inputTokens[key].trim() : defVal;
+      }
+
+      const name = String(input.name || "自定义主题").trim();
+      const id = String(input.id || ("custom_" + Date.now().toString(36))).trim().replace(/[^a-zA-Z0-9_-]/g, "_");
+      const description = String(input.description || "用户自定义导入的主题样式").trim();
+
+      return {
+        type: this.SCHEMA_TYPE,
+        version: this.SCHEMA_VERSION,
+        id,
+        name,
+        description,
+        isBuiltin: false,
+        tokens: cleanTokens,
+        createdAt: input.createdAt || Date.now(),
+        updatedAt: Date.now()
+      };
+    },
+
+    // 导入自定义主题 JSON
+    importTheme(jsonStringOrObj) {
+      let parsed = jsonStringOrObj;
+      if (typeof jsonStringOrObj === "string") {
+        try {
+          parsed = JSON.parse(jsonStringOrObj);
+        } catch (err) {
+          throw new Error("JSON 解析失败: " + err.message);
+        }
+      }
+
+      const theme = this.validateAndNormalizeTheme(parsed);
+      const customs = this.getCustomThemes();
+
+      // 如果 ID 与内置主题冲突，则分配新 ID
+      if (this.BUILTIN_THEMES.some((b) => b.id === theme.id)) {
+        theme.id = "custom_" + theme.id + "_" + Date.now().toString(36).slice(-4);
+      }
+
+      customs[theme.id] = theme;
+      this.saveCustomThemesMap(customs);
+      this.setActiveTheme(theme.id);
+      return theme;
+    },
+
+    // 导出指定主题为结构化 JSON 字符串
+    exportTheme(id) {
+      const theme = this.getThemeById(id);
+      const exportObj = {
+        type: this.SCHEMA_TYPE,
+        version: this.SCHEMA_VERSION,
+        id: theme.id,
+        name: theme.name,
+        description: theme.description,
+        tokens: theme.tokens,
+        exportedAt: Date.now()
+      };
+      return JSON.stringify(exportObj, null, 2);
+    },
+
+    // 保存/更新自定义主题
+    saveCustomTheme(themeObj) {
+      const normalized = this.validateAndNormalizeTheme(themeObj);
+      const customs = this.getCustomThemes();
+      customs[normalized.id] = normalized;
+      this.saveCustomThemesMap(customs);
+      this.setActiveTheme(normalized.id);
+      return normalized;
+    },
+
+    // 删除自定义主题（内置主题禁止删除）
+    deleteCustomTheme(id) {
+      if (this.BUILTIN_THEMES.some((b) => b.id === id)) {
+        throw new Error("内置官方主题受保护，不可删除");
+      }
+      const customs = this.getCustomThemes();
+      if (customs[id]) {
+        delete customs[id];
+        this.saveCustomThemesMap(customs);
+      }
+      if (GM_getValue("Config.active_theme_id", "") === id) {
+        this.resetToDefault();
+      }
+    },
+
+    // 生成 CSS 变量字符串
+    generateCssVariables(tokens, targetUid) {
+      const rootSel = targetUid ? `#${targetUid}-root` : `:host, [id$="-root"]`;
+      return `
+    ${rootSel} {
+      --lsm-accent: ${tokens.accent};
+      --lsm-accent-bg: ${tokens.accentBg};
+      --lsm-accent-border: ${tokens.accentBorder};
+      --lsm-accent-hover-bg: ${tokens.accentHoverBg};
+      --lsm-accent-glow: ${tokens.accentGlow};
+      --lsm-bg-paper: ${tokens.bgPaper};
+      --lsm-bg-header: ${tokens.bgHeader};
+      --lsm-bg-card: ${tokens.bgCard};
+      --lsm-bg-list: ${tokens.bgList};
+      --lsm-bg-hover: ${tokens.bgHover};
+      --lsm-bg-active-card: ${tokens.bgActiveCard};
+      --lsm-border: ${tokens.borderLight};
+      --lsm-border-hover: ${tokens.borderHover};
+      --lsm-text-primary: ${tokens.textPrimary};
+      --lsm-text-secondary: ${tokens.textSecondary};
+      --lsm-text-muted: ${tokens.textMuted};
+      --lsm-text-placeholder: ${tokens.textPlaceholder};
+      --lsm-color-success: ${tokens.colorSuccess};
+      --lsm-bg-success: ${tokens.bgSuccess};
+      --lsm-border-success: ${tokens.borderSuccess};
+      --lsm-color-warning: ${tokens.colorWarning};
+      --lsm-bg-warning: ${tokens.bgWarning};
+      --lsm-border-warning: ${tokens.borderWarning};
+      --lsm-color-info: ${tokens.colorInfo};
+      --lsm-bg-info: ${tokens.bgInfo};
+      --lsm-border-info: ${tokens.borderInfo};
+      --lsm-color-danger: ${tokens.colorDanger};
+      --lsm-bg-danger: ${tokens.bgDanger};
+      --lsm-border-danger: ${tokens.borderDanger};
+      --lsm-font-family: ${tokens.fontFamily};
+      --lsm-radius-window: ${tokens.radiusWindow || "16px"};
+      --lsm-radius-card: ${tokens.radiusCard || "12px"};
+      --lsm-radius-btn: ${tokens.radiusBtn || "8px"};
+    }
+      `;
+    },
+
+    // 动态应用主题到当前 UI 实例（Shadow DOM 与 Host Dialogs）
+    applyTheme(theme) {
+      const active = theme || this.getActiveTheme();
+      const cssVars = this.generateCssVariables(active.tokens, this._uid);
+
+      // 1. 注入 Shadow Root 变量样式表
+      if (this._shadow) {
+        const varStyleId = this._uid ? `${this._uid}-theme-vars` : "lsm-theme-vars";
+        let varStyle = this._shadow.getElementById(varStyleId);
+        if (!varStyle) {
+          varStyle = document.createElement("style");
+          varStyle.id = varStyleId;
+          this._shadow.insertBefore(varStyle, this._shadow.firstChild);
+        }
+        varStyle.textContent = cssVars;
+      }
+
+      // 2. 注入全局宿主环境弹窗主题变量
+      if (typeof document !== "undefined" && document) {
+        let hostVarStyle = document.getElementById("lsm-host-theme-vars");
+        if (!hostVarStyle) {
+          hostVarStyle = document.createElement("style");
+          hostVarStyle.id = "lsm-host-theme-vars";
+          (document.head || document.documentElement).appendChild(hostVarStyle);
+        }
+        hostVarStyle.textContent = `
+          :root {
+            --lsm-host-accent: ${active.tokens.accent};
+            --lsm-host-accent-bg: ${active.tokens.accentBg};
+            --lsm-host-accent-border: ${active.tokens.accentBorder};
+            --lsm-host-bg-paper: ${active.tokens.bgPaper};
+            --lsm-host-border: ${active.tokens.borderLight};
+            --lsm-host-border-hover: ${active.tokens.borderHover || "#d0cec6"};
+            --lsm-host-text-primary: ${active.tokens.textPrimary};
+            --lsm-host-text-secondary: ${active.tokens.textSecondary};
+            --lsm-host-text-muted: ${active.tokens.textMuted};
+            --lsm-host-font: ${active.tokens.fontFamily};
+          }
+
+          /* 宿主环境全部相关弹窗、文本域与列表滚动条美化 */
+          div[id*="lsm"] * {
+            scrollbar-width: thin;
+            scrollbar-color: ${active.tokens.borderHover || "#d0cec6"} transparent;
+          }
+          div[id*="lsm"] *::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+          }
+          div[id*="lsm"] *::-webkit-scrollbar-track {
+            background: transparent;
+            border-radius: 9999px;
+          }
+          div[id*="lsm"] *::-webkit-scrollbar-thumb {
+            background-color: ${active.tokens.borderHover || "#d0cec6"};
+            border-radius: 9999px;
+            border: 1px solid transparent;
+            background-clip: padding-box;
+            transition: background-color 0.2s ease;
+          }
+          div[id*="lsm"] *::-webkit-scrollbar-thumb:hover {
+            background-color: ${active.tokens.accent};
+          }
+          div[id*="lsm"] *::-webkit-scrollbar-corner {
+            background: transparent;
+          }
+        `;
+      }
+    }
+  };
+
+
 // 获取域名过滤模式，自动提取前面英文关键词（whitelist / blacklist）
 function getFilterMode() {
   let val = GM_getValue("Config.filter_mode", "whitelist");
@@ -133,6 +631,17 @@ function hostBlocked() {
   // 5. 🔄 恢复后刷新跳转状态切换
   // =========================================================================
   function registerAllMenuCommands() {
+    // 主题风格与个性化设置
+    GM_registerMenuCommand("🎨 主题设置 (切换/导出/导入)", async () => {
+      if (!LSM_UI) {
+        await initApp();
+      }
+      if (LSM_UI) {
+        if (typeof LSM_UI.openWindow === "function") LSM_UI.openWindow();
+        if (typeof LSM_UI.openThemeDialog === "function") LSM_UI.openThemeDialog();
+      }
+    });
+
     // 1. 主入口
     GM_registerMenuCommand("🔑 快照管理助手", () => {
       if (hostBlocked()) {
@@ -394,17 +903,17 @@ function showBlockedDialog() {
   const mask = document.createElement("div");
   mask.className = "lsm-dlg-mask";
   mask.style.cssText =
-    "position:fixed;inset:0;z-index:2147483647;background:rgba(15,23,42,0.55);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);" +
-    "display:flex;align-items:center;justify-content:center;overscroll-behavior:contain;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;";
+    "position:fixed;inset:0;z-index:2147483647;background:rgba(20,19,18,0.45);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);" +
+    "display:flex;align-items:center;justify-content:center;overscroll-behavior:contain;font-family:system-ui,-apple-system,'PingFang SC','Hiragino Sans GB','Microsoft YaHei','Noto Sans SC',sans-serif;";
   bindScrollLock(mask, null);
 
   const box = document.createElement("div");
   box.style.cssText =
-    "width:360px;max-width:calc(100vw - 40px);background:#ffffff;border-radius:16px;" +
-    "padding:24px;box-shadow:0 20px 45px -10px rgba(15,23,42,0.25),0 0 0 1px rgba(15,23,42,0.06);box-sizing:border-box;animation:lsmFadeIn .2s ease-out;";
+    "width:360px;max-width:calc(100vw - 32px);background:#faf9f5;border:1px solid #e3e1db;border-radius:16px;" +
+    "padding:24px;box-shadow:0 20px 45px -10px rgba(36,35,31,0.18),0 1px 3px rgba(0,0,0,0.04);box-sizing:border-box;animation:lsmFadeIn .2s cubic-bezier(0.16,1,0.3,1);";
 
   const title = document.createElement("div");
-  title.innerHTML = "🔑 <span style='color:#0f172a;font-size:16px;font-weight:700;'>快照管理助手未激活</span>";
+  title.innerHTML = "🔑 <span style='color:#24231f;font-size:15px;font-weight:600;'>快照管理助手未激活</span>";
   title.style.cssText = "margin-bottom:10px;display:flex;align-items:center;gap:6px;";
 
   const mode = getFilterMode();
@@ -413,25 +922,43 @@ function showBlockedDialog() {
   desc.textContent = mode === "blacklist"
     ? "当前网站已被加入「黑名单」列表中，快照助手未在此站点激活。你可以选择："
     : "当前网站不在「白名单」列表中，快照助手未在此站点激活。你可以选择：";
-  desc.style.cssText = "font-size:13px;color:#64748b;line-height:1.6;margin-bottom:18px;";
+  desc.style.cssText = "font-size:13px;color:#5c5a55;line-height:1.6;margin-bottom:18px;";
 
   const tempBtn = document.createElement("button");
   tempBtn.textContent = "临时显示（仅本次生效）";
   tempBtn.style.cssText =
-    "display:block;width:100%;padding:10px 0;margin-bottom:10px;border:none;border-radius:10px;" +
-    "background:linear-gradient(135deg,#3b82f6,#2563eb);color:#ffffff;font-size:13px;cursor:pointer;font-weight:600;box-shadow:0 2px 8px rgba(37,99,235,0.25);";
+    "display:block;width:100%;padding:9px 0;margin-bottom:9px;border:1px solid rgba(197,100,115,0.3);border-radius:10px;" +
+    "background:rgba(197,100,115,0.08);color:#c56473;font-size:13px;cursor:pointer;font-weight:500;transition:all .2s cubic-bezier(0.22,1,0.36,1);";
+  tempBtn.addEventListener("mouseenter", () => {
+    tempBtn.style.background = "rgba(197,100,115,0.14)";
+    tempBtn.style.borderColor = "rgba(197,100,115,0.45)";
+  });
+  tempBtn.addEventListener("mouseleave", () => {
+    tempBtn.style.background = "rgba(197,100,115,0.08)";
+    tempBtn.style.borderColor = "rgba(197,100,115,0.3)";
+  });
 
   const permBtn = document.createElement("button");
   permBtn.textContent = mode === "blacklist" ? "永久开启（移出黑名单）" : "永久开启（加入白名单）";
   permBtn.style.cssText =
-    "display:block;width:100%;padding:10px 0;border:1px solid #e2e8f0;border-radius:10px;" +
-    "background:#f8fafc;color:#1e293b;font-size:13px;cursor:pointer;font-weight:600;";
+    "display:block;width:100%;padding:9px 0;border:1px solid #e3e1db;border-radius:10px;" +
+    "background:transparent;color:#403f3a;font-size:13px;cursor:pointer;font-weight:500;transition:all .2s cubic-bezier(0.22,1,0.36,1);";
+  permBtn.addEventListener("mouseenter", () => {
+    permBtn.style.background = "#f0efeb";
+    permBtn.style.borderColor = "#d0cec6";
+  });
+  permBtn.addEventListener("mouseleave", () => {
+    permBtn.style.background = "transparent";
+    permBtn.style.borderColor = "#e3e1db";
+  });
 
   const cancelBtn = document.createElement("button");
   cancelBtn.textContent = "取消";
   cancelBtn.style.cssText =
-    "display:block;width:100%;padding:10px 0;margin-top:8px;border:none;background:none;" +
-    "color:#94a3b8;font-size:12px;cursor:pointer;";
+    "display:block;width:100%;padding:8px 0;margin-top:6px;border:none;background:none;" +
+    "color:#787670;font-size:12px;cursor:pointer;transition:color .15s;";
+  cancelBtn.addEventListener("mouseenter", () => cancelBtn.style.color = "#24231f");
+  cancelBtn.addEventListener("mouseleave", () => cancelBtn.style.color = "#787670");
 
   const close = () => mask.remove();
 
@@ -463,17 +990,17 @@ function showMainDialog() {
   const mask = document.createElement("div");
   mask.className = "lsm-dlg-mask";
   mask.style.cssText =
-    "position:fixed;inset:0;z-index:2147483647;background:rgba(15,23,42,0.55);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);" +
-    "display:flex;align-items:center;justify-content:center;overscroll-behavior:contain;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;";
+    "position:fixed;inset:0;z-index:2147483647;background:rgba(20,19,18,0.45);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);" +
+    "display:flex;align-items:center;justify-content:center;overscroll-behavior:contain;font-family:system-ui,-apple-system,'PingFang SC','Hiragino Sans GB','Microsoft YaHei','Noto Sans SC',sans-serif;";
   bindScrollLock(mask, null);
 
   const box = document.createElement("div");
   box.style.cssText =
-    "width:360px;max-width:calc(100vw - 40px);background:#ffffff;border-radius:16px;" +
-    "padding:24px;box-shadow:0 20px 45px -10px rgba(15,23,42,0.25),0 0 0 1px rgba(15,23,42,0.06);box-sizing:border-box;animation:lsmFadeIn .2s ease-out;";
+    "width:360px;max-width:calc(100vw - 32px);background:#faf9f5;border:1px solid #e3e1db;border-radius:16px;" +
+    "padding:24px;box-shadow:0 20px 45px -10px rgba(36,35,31,0.18),0 1px 3px rgba(0,0,0,0.04);box-sizing:border-box;animation:lsmFadeIn .2s cubic-bezier(0.16,1,0.3,1);";
 
   const title = document.createElement("div");
-  title.innerHTML = "🔑 <span style='color:#0f172a;font-size:16px;font-weight:700;'>快照管理助手</span>";
+  title.innerHTML = "🔑 <span style='color:#24231f;font-size:15px;font-weight:600;'>快照管理助手</span>";
   title.style.cssText = "margin-bottom:10px;display:flex;align-items:center;gap:6px;";
 
   const mode = getFilterMode();
@@ -482,31 +1009,57 @@ function showMainDialog() {
   desc.textContent = mode === "blacklist"
     ? "当前网站处于黑名单排除范围之外，功能就绪。你可以选择："
     : "当前网站已在白名单允许列表中，功能就绪。你可以选择：";
-  desc.style.cssText = "font-size:13px;color:#64748b;line-height:1.6;margin-bottom:18px;";
+  desc.style.cssText = "font-size:13px;color:#5c5a55;line-height:1.6;margin-bottom:18px;";
 
   const openBtn = document.createElement("button");
   openBtn.textContent = "打开管理窗口";
   openBtn.style.cssText =
-    "display:block;width:100%;padding:10px 0;margin-bottom:10px;border:none;border-radius:10px;" +
-    "background:linear-gradient(135deg,#3b82f6,#2563eb);color:#ffffff;font-size:13px;cursor:pointer;font-weight:600;box-shadow:0 2px 8px rgba(37,99,235,0.25);";
+    "display:block;width:100%;padding:9px 0;margin-bottom:9px;border:1px solid rgba(197,100,115,0.3);border-radius:10px;" +
+    "background:rgba(197,100,115,0.08);color:#c56473;font-size:13px;cursor:pointer;font-weight:500;transition:all .2s cubic-bezier(0.22,1,0.36,1);";
+  openBtn.addEventListener("mouseenter", () => {
+    openBtn.style.background = "rgba(197,100,115,0.14)";
+    openBtn.style.borderColor = "rgba(197,100,115,0.45)";
+  });
+  openBtn.addEventListener("mouseleave", () => {
+    openBtn.style.background = "rgba(197,100,115,0.08)";
+    openBtn.style.borderColor = "rgba(197,100,115,0.3)";
+  });
 
   const tmpBtn = document.createElement("button");
   tmpBtn.textContent = "临时隐藏悬浮球（刷新后恢复）";
   tmpBtn.style.cssText =
-    "display:block;width:100%;padding:10px 0;margin-bottom:10px;border:1px solid #e2e8f0;border-radius:10px;" +
-    "background:#f8fafc;color:#334155;font-size:13px;cursor:pointer;font-weight:500;";
+    "display:block;width:100%;padding:9px 0;margin-bottom:9px;border:1px solid #e3e1db;border-radius:10px;" +
+    "background:transparent;color:#403f3a;font-size:13px;cursor:pointer;font-weight:500;transition:all .2s cubic-bezier(0.22,1,0.36,1);";
+  tmpBtn.addEventListener("mouseenter", () => {
+    tmpBtn.style.background = "#f0efeb";
+    tmpBtn.style.borderColor = "#d0cec6";
+  });
+  tmpBtn.addEventListener("mouseleave", () => {
+    tmpBtn.style.background = "transparent";
+    tmpBtn.style.borderColor = "#e3e1db";
+  });
 
   const permBtn = document.createElement("button");
   permBtn.textContent = mode === "blacklist" ? "永久关闭（加入黑名单）" : "永久关闭（从白名单移除）";
   permBtn.style.cssText =
-    "display:block;width:100%;padding:10px 0;border:1px solid #fecdd3;border-radius:10px;" +
-    "background:#fff1f2;color:#e11d48;font-size:13px;cursor:pointer;font-weight:500;";
+    "display:block;width:100%;padding:9px 0;border:1px solid rgba(166,73,83,0.25);border-radius:10px;" +
+    "background:rgba(166,73,83,0.06);color:#a64953;font-size:13px;cursor:pointer;font-weight:500;transition:all .2s cubic-bezier(0.22,1,0.36,1);";
+  permBtn.addEventListener("mouseenter", () => {
+    permBtn.style.background = "rgba(166,73,83,0.12)";
+    permBtn.style.borderColor = "rgba(166,73,83,0.4)";
+  });
+  permBtn.addEventListener("mouseleave", () => {
+    permBtn.style.background = "rgba(166,73,83,0.06)";
+    permBtn.style.borderColor = "rgba(166,73,83,0.25)";
+  });
 
   const cancelBtn = document.createElement("button");
   cancelBtn.textContent = "取消";
   cancelBtn.style.cssText =
-    "display:block;width:100%;padding:10px 0;margin-top:8px;border:none;background:none;" +
-    "color:#94a3b8;font-size:12px;cursor:pointer;";
+    "display:block;width:100%;padding:8px 0;margin-top:6px;border:none;background:none;" +
+    "color:#787670;font-size:12px;cursor:pointer;transition:color .15s;";
+  cancelBtn.addEventListener("mouseenter", () => cancelBtn.style.color = "#24231f");
+  cancelBtn.addEventListener("mouseleave", () => cancelBtn.style.color = "#787670");
 
   const close = () => mask.remove();
 
@@ -565,37 +1118,47 @@ function showSwitchFilterModeDialog() {
   const mask = document.createElement("div");
   mask.className = "lsm-dlg-mask";
   mask.style.cssText =
-    "position:fixed;inset:0;z-index:2147483647;background:rgba(15,23,42,0.55);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);" +
-    "display:flex;align-items:center;justify-content:center;overscroll-behavior:contain;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;";
+    "position:fixed;inset:0;z-index:2147483647;background:rgba(20,19,18,0.45);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);" +
+    "display:flex;align-items:center;justify-content:center;overscroll-behavior:contain;font-family:system-ui,-apple-system,'PingFang SC','Hiragino Sans GB','Microsoft YaHei','Noto Sans SC',sans-serif;";
   bindScrollLock(mask, null);
 
   const box = document.createElement("div");
   box.style.cssText =
-    "width:380px;max-width:calc(100vw - 40px);background:#ffffff;border-radius:16px;" +
-    "padding:24px;box-shadow:0 20px 45px -10px rgba(15,23,42,0.25),0 0 0 1px rgba(15,23,42,0.06);box-sizing:border-box;animation:lsmFadeIn .2s ease-out;";
+    "width:380px;max-width:calc(100vw - 32px);background:#faf9f5;border:1px solid #e3e1db;border-radius:16px;" +
+    "padding:24px;box-shadow:0 20px 45px -10px rgba(36,35,31,0.18),0 1px 3px rgba(0,0,0,0.04);box-sizing:border-box;animation:lsmFadeIn .2s cubic-bezier(0.16,1,0.3,1);";
 
   const title = document.createElement("div");
-  title.innerHTML = "🛡️ <span style='color:#0f172a;font-size:16px;font-weight:700;'>切换域名过滤模式</span>";
+  title.innerHTML = "🛡️ <span style='color:#24231f;font-size:15px;font-weight:600;'>切换域名过滤模式</span>";
   title.style.cssText = "margin-bottom:10px;display:flex;align-items:center;gap:6px;";
 
   const desc = document.createElement("div");
   desc.innerHTML =
-    `当前模式：<strong style="color:#0f172a;">${currentMode === "blacklist" ? "黑名单模式 (列表中的网站不生效)" : "白名单模式 (仅在列表中生效)"}</strong><br>` +
-    `点击下方按钮将切换为：<strong style="color:#2563eb;">${targetModeLabel}</strong>。<br>` +
-    `<span style="color:#94a3b8;font-size:12px;">切换后将立即生效并刷新当前页面。</span>`;
-  desc.style.cssText = "font-size:13px;color:#64748b;line-height:1.6;margin-bottom:18px;";
+    `当前模式：<strong style="color:#24231f;">${currentMode === "blacklist" ? "黑名单模式 (列表中的网站不生效)" : "白名单模式 (仅在列表中生效)"}</strong><br>` +
+    `点击下方按钮将切换为：<strong style="color:#c56473;">${targetModeLabel}</strong>。<br>` +
+    `<span style="color:#787670;font-size:12px;">切换后将立即生效并刷新当前页面。</span>`;
+  desc.style.cssText = "font-size:13px;color:#5c5a55;line-height:1.6;margin-bottom:18px;";
 
   const confirmBtn = document.createElement("button");
   confirmBtn.textContent = `确认切换为「${targetModeLabel}」`;
   confirmBtn.style.cssText =
-    "display:block;width:100%;padding:10px 0;margin-bottom:10px;border:none;border-radius:10px;" +
-    "background:linear-gradient(135deg,#3b82f6,#2563eb);color:#ffffff;font-size:13px;cursor:pointer;font-weight:600;box-shadow:0 2px 8px rgba(37,99,235,0.25);";
+    "display:block;width:100%;padding:9px 0;margin-bottom:9px;border:1px solid rgba(197,100,115,0.3);border-radius:10px;" +
+    "background:rgba(197,100,115,0.08);color:#c56473;font-size:13px;cursor:pointer;font-weight:500;transition:all .2s cubic-bezier(0.22,1,0.36,1);";
+  confirmBtn.addEventListener("mouseenter", () => {
+    confirmBtn.style.background = "rgba(197,100,115,0.14)";
+    confirmBtn.style.borderColor = "rgba(197,100,115,0.45)";
+  });
+  confirmBtn.addEventListener("mouseleave", () => {
+    confirmBtn.style.background = "rgba(197,100,115,0.08)";
+    confirmBtn.style.borderColor = "rgba(197,100,115,0.3)";
+  });
 
   const cancelBtn = document.createElement("button");
   cancelBtn.textContent = "取消";
   cancelBtn.style.cssText =
-    "display:block;width:100%;padding:10px 0;margin-top:4px;border:none;background:none;" +
-    "color:#94a3b8;font-size:12px;cursor:pointer;";
+    "display:block;width:100%;padding:8px 0;margin-top:4px;border:none;background:none;" +
+    "color:#787670;font-size:12px;cursor:pointer;transition:color .15s;";
+  cancelBtn.addEventListener("mouseenter", () => cancelBtn.style.color = "#24231f");
+  cancelBtn.addEventListener("mouseleave", () => cancelBtn.style.color = "#787670");
 
   const close = () => mask.remove();
 
@@ -632,41 +1195,39 @@ function showEditHostListDialog() {
   const mask = document.createElement("div");
   mask.className = "lsm-dlg-mask";
   mask.style.cssText =
-    "position:fixed;inset:0;z-index:2147483647;background:rgba(15,23,42,0.55);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);" +
-    "display:flex;align-items:center;justify-content:center;overscroll-behavior:contain;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;";
+    "position:fixed;inset:0;z-index:2147483647;background:rgba(20,19,18,0.45);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);" +
+    "display:flex;align-items:center;justify-content:center;overscroll-behavior:contain;font-family:system-ui,-apple-system,'PingFang SC','Hiragino Sans GB','Microsoft YaHei','Noto Sans SC',sans-serif;";
   bindScrollLock(mask, "textarea");
 
   const box = document.createElement("div");
   box.style.cssText =
-    "width:460px;max-width:calc(100vw - 40px);background:#ffffff;border-radius:16px;" +
-    "padding:24px;box-shadow:0 20px 45px -10px rgba(15,23,42,0.25),0 0 0 1px rgba(15,23,42,0.06);box-sizing:border-box;animation:lsmFadeIn .2s ease-out;";
+    "width:460px;max-width:calc(100vw - 32px);background:#faf9f5;border:1px solid #e3e1db;border-radius:16px;" +
+    "padding:24px;box-shadow:0 20px 45px -10px rgba(36,35,31,0.18),0 1px 3px rgba(0,0,0,0.04);box-sizing:border-box;animation:lsmFadeIn .2s cubic-bezier(0.16,1,0.3,1);";
 
   const title = document.createElement("div");
-  title.innerHTML = "📝 <span style='color:#0f172a;font-size:16px;font-weight:700;'>编辑域名规则列表</span>";
+  title.innerHTML = "📝 <span style='color:#24231f;font-size:15px;font-weight:600;'>编辑域名规则列表</span>";
   title.style.cssText = "margin-bottom:8px;display:flex;align-items:center;gap:6px;";
 
   const desc = document.createElement("div");
   desc.innerHTML =
-    `当前生效模式：<strong style="color:#2563eb;">${mode === "blacklist" ? "黑名单模式 (列表中不生效)" : "白名单模式 (仅在列表中生效)"}</strong><br>` +
+    `当前生效模式：<strong style="color:#c56473;">${mode === "blacklist" ? "黑名单模式 (列表中不生效)" : "白名单模式 (仅在列表中生效)"}</strong><br>` +
     `每行一条规则，支持通配符 <code>*</code>（例：<code>https://*.example.com*</code> 或 <code>*.baidu.com</code>）：`;
-  desc.style.cssText = "font-size:12.5px;color:#64748b;line-height:1.5;margin-bottom:12px;";
+  desc.style.cssText = "font-size:12.5px;color:#5c5a55;line-height:1.5;margin-bottom:12px;";
 
   const textarea = document.createElement("textarea");
   textarea.value = String(raw || "");
   textarea.placeholder = "*.google.com\nhttps://github.com/*\n*.example.org";
   textarea.style.cssText =
-    "width:100%;height:160px;box-sizing:border-box;border:1px solid #cbd5e1;border-radius:10px;" +
-    "padding:10px 12px;font-size:13px;line-height:1.5;font-family:Consolas,Monaco,monospace;color:#1e293b;resize:vertical;outline:none;" +
-    "background:#f8fafc;transition:border-color .15s,box-shadow .15s;margin-bottom:16px;";
+    "width:100%;height:160px;box-sizing:border-box;border:1px solid #e3e1db;border-radius:10px;" +
+    "padding:10px 12px;font-size:13px;line-height:1.5;font-family:ui-monospace,Consolas,Monaco,monospace;color:#24231f;resize:vertical;outline:none;" +
+    "background:#ffffff;background-image:linear-gradient(180deg,rgba(197,100,115,0.03) 0%,transparent 26%);transition:border-color .2s,box-shadow .2s;margin-bottom:16px;";
   textarea.addEventListener("focus", () => {
-    textarea.style.borderColor = "#3b82f6";
-    textarea.style.boxShadow = "0 0 0 3px rgba(59,130,246,0.15)";
-    textarea.style.background = "#ffffff";
+    textarea.style.borderColor = "rgba(197,100,115,0.35)";
+    textarea.style.boxShadow = "0 0 0 3px rgba(197,100,115,0.1)";
   });
   textarea.addEventListener("blur", () => {
-    textarea.style.borderColor = "#cbd5e1";
+    textarea.style.borderColor = "#e3e1db";
     textarea.style.boxShadow = "none";
-    textarea.style.background = "#f8fafc";
   });
 
   const btnRow = document.createElement("div");
@@ -675,7 +1236,15 @@ function showEditHostListDialog() {
   const addCurrBtn = document.createElement("button");
   addCurrBtn.textContent = "+ 添加当前网站";
   addCurrBtn.style.cssText =
-    "padding:8px 12px;border:1px solid #e2e8f0;border-radius:8px;background:#f1f5f9;color:#334155;font-size:12px;cursor:pointer;font-weight:500;";
+    "padding:7px 12px;border:1px solid #e3e1db;border-radius:8px;background:transparent;color:#403f3a;font-size:12px;cursor:pointer;font-weight:500;transition:all .15s;";
+  addCurrBtn.addEventListener("mouseenter", () => {
+    addCurrBtn.style.background = "#f0efeb";
+    addCurrBtn.style.borderColor = "#d0cec6";
+  });
+  addCurrBtn.addEventListener("mouseleave", () => {
+    addCurrBtn.style.background = "transparent";
+    addCurrBtn.style.borderColor = "#e3e1db";
+  });
   addCurrBtn.addEventListener("click", () => {
     const origin = location.origin;
     const lines = textarea.value.split("\n").map((s) => s.trim()).filter(Boolean);
@@ -688,12 +1257,22 @@ function showEditHostListDialog() {
   const saveBtn = document.createElement("button");
   saveBtn.textContent = "保存并应用";
   saveBtn.style.cssText =
-    "padding:8px 18px;border:none;border-radius:8px;background:linear-gradient(135deg,#3b82f6,#2563eb);color:#ffffff;font-size:12.5px;cursor:pointer;font-weight:600;box-shadow:0 2px 8px rgba(37,99,235,0.25);";
+    "padding:7px 16px;border:1px solid rgba(197,100,115,0.3);border-radius:8px;background:rgba(197,100,115,0.08);color:#c56473;font-size:12.5px;cursor:pointer;font-weight:500;transition:all .2s cubic-bezier(0.22,1,0.36,1);";
+  saveBtn.addEventListener("mouseenter", () => {
+    saveBtn.style.background = "rgba(197,100,115,0.14)";
+    saveBtn.style.borderColor = "rgba(197,100,115,0.45)";
+  });
+  saveBtn.addEventListener("mouseleave", () => {
+    saveBtn.style.background = "rgba(197,100,115,0.08)";
+    saveBtn.style.borderColor = "rgba(197,100,115,0.3)";
+  });
 
   const cancelBtn = document.createElement("button");
   cancelBtn.textContent = "取消";
   cancelBtn.style.cssText =
-    "padding:8px 14px;border:none;background:none;color:#94a3b8;font-size:12px;cursor:pointer;";
+    "padding:7px 12px;border:none;background:none;color:#787670;font-size:12px;cursor:pointer;transition:color .15s;";
+  cancelBtn.addEventListener("mouseenter", () => cancelBtn.style.color = "#24231f");
+  cancelBtn.addEventListener("mouseleave", () => cancelBtn.style.color = "#787670");
 
   const close = () => mask.remove();
 
@@ -732,37 +1311,45 @@ function showToggleEncryptionDialog() {
   const mask = document.createElement("div");
   mask.className = "lsm-dlg-mask";
   mask.style.cssText =
-    "position:fixed;inset:0;z-index:2147483647;background:rgba(15,23,42,0.55);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);" +
-    "display:flex;align-items:center;justify-content:center;overscroll-behavior:contain;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;";
+    "position:fixed;inset:0;z-index:2147483647;background:rgba(20,19,18,0.45);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);" +
+    "display:flex;align-items:center;justify-content:center;overscroll-behavior:contain;font-family:system-ui,-apple-system,'PingFang SC','Hiragino Sans GB','Microsoft YaHei','Noto Sans SC',sans-serif;";
   bindScrollLock(mask, null);
 
   const box = document.createElement("div");
   box.style.cssText =
-    "width:380px;max-width:calc(100vw - 40px);background:#ffffff;border-radius:16px;" +
-    "padding:24px;box-shadow:0 20px 45px -10px rgba(15,23,42,0.25),0 0 0 1px rgba(15,23,42,0.06);box-sizing:border-box;animation:lsmFadeIn .2s ease-out;";
+    "width:380px;max-width:calc(100vw - 32px);background:#faf9f5;border:1px solid #e3e1db;border-radius:16px;" +
+    "padding:24px;box-shadow:0 20px 45px -10px rgba(36,35,31,0.18),0 1px 3px rgba(0,0,0,0.04);box-sizing:border-box;animation:lsmFadeIn .2s cubic-bezier(0.16,1,0.3,1);";
 
   const title = document.createElement("div");
-  title.innerHTML = "🔒 <span style='color:#0f172a;font-size:16px;font-weight:700;'>本地数据加密设置</span>";
+  title.innerHTML = "🔒 <span style='color:#24231f;font-size:15px;font-weight:600;'>本地数据加密设置</span>";
   title.style.cssText = "margin-bottom:10px;display:flex;align-items:center;gap:6px;";
 
   const desc = document.createElement("div");
   desc.innerHTML =
-    `当前状态：<strong style="color:${isEnc ? "#16a34a" : "#e11d48"};">${isEnc ? "已开启 AES-GCM 256 位加密" : "未开启（明文存储）"}</strong><br>` +
-    `点击确认将切换为：<strong style="color:#2563eb;">${targetEnc ? "开启本地数据加密" : "关闭本地数据加密"}</strong>。<br>` +
-    `<span style="color:#94a3b8;font-size:12px;">（新保存的快照将按新设置执行，已保存的旧快照依然支持正常读取）</span>`;
-  desc.style.cssText = "font-size:13px;color:#64748b;line-height:1.6;margin-bottom:18px;";
+    `当前状态：<strong style="color:${isEnc ? "#5e9f7e" : "#a64953"};">${isEnc ? "已开启 AES-GCM 256 位加密" : "未开启（明文存储）"}</strong><br>` +
+    `点击确认将切换为：<strong style="color:#c56473;">${targetEnc ? "开启本地数据加密" : "关闭本地数据加密"}</strong>。<br>` +
+    `<span style="color:#787670;font-size:12px;">（新保存的快照将按新设置执行，已保存的旧快照依然支持正常读取）</span>`;
+  desc.style.cssText = "font-size:13px;color:#5c5a55;line-height:1.6;margin-bottom:18px;";
 
   const confirmBtn = document.createElement("button");
   confirmBtn.textContent = targetEnc ? "确认开启加密" : "确认关闭加密";
   confirmBtn.style.cssText =
-    `display:block;width:100%;padding:10px 0;margin-bottom:10px;border:none;border-radius:10px;` +
-    `background:${targetEnc ? "linear-gradient(135deg,#3b82f6,#2563eb)" : "linear-gradient(135deg,#e11d48,#be123c)"};color:#ffffff;font-size:13px;cursor:pointer;font-weight:600;box-shadow:0 2px 8px rgba(0,0,0,0.15);`;
+    `display:block;width:100%;padding:9px 0;margin-bottom:9px;border:1px solid ${targetEnc ? "rgba(197,100,115,0.3)" : "rgba(166,73,83,0.25)"};border-radius:10px;` +
+    `background:${targetEnc ? "rgba(197,100,115,0.08)" : "rgba(166,73,83,0.06)"};color:${targetEnc ? "#c56473" : "#a64953"};font-size:13px;cursor:pointer;font-weight:500;transition:all .2s cubic-bezier(0.22,1,0.36,1);`;
+  confirmBtn.addEventListener("mouseenter", () => {
+    confirmBtn.style.background = targetEnc ? "rgba(197,100,115,0.14)" : "rgba(166,73,83,0.12)";
+  });
+  confirmBtn.addEventListener("mouseleave", () => {
+    confirmBtn.style.background = targetEnc ? "rgba(197,100,115,0.08)" : "rgba(166,73,83,0.06)";
+  });
 
   const cancelBtn = document.createElement("button");
   cancelBtn.textContent = "取消";
   cancelBtn.style.cssText =
-    "display:block;width:100%;padding:10px 0;margin-top:4px;border:none;background:none;" +
-    "color:#94a3b8;font-size:12px;cursor:pointer;";
+    "display:block;width:100%;padding:8px 0;margin-top:4px;border:none;background:none;" +
+    "color:#787670;font-size:12px;cursor:pointer;transition:color .15s;";
+  cancelBtn.addEventListener("mouseenter", () => cancelBtn.style.color = "#24231f");
+  cancelBtn.addEventListener("mouseleave", () => cancelBtn.style.color = "#787670");
 
   const close = () => mask.remove();
 
@@ -795,36 +1382,46 @@ function showToggleAutoReloadDialog() {
   const mask = document.createElement("div");
   mask.className = "lsm-dlg-mask";
   mask.style.cssText =
-    "position:fixed;inset:0;z-index:2147483647;background:rgba(15,23,42,0.55);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);" +
-    "display:flex;align-items:center;justify-content:center;overscroll-behavior:contain;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;";
+    "position:fixed;inset:0;z-index:2147483647;background:rgba(20,19,18,0.45);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);" +
+    "display:flex;align-items:center;justify-content:center;overscroll-behavior:contain;font-family:system-ui,-apple-system,'PingFang SC','Hiragino Sans GB','Microsoft YaHei','Noto Sans SC',sans-serif;";
   bindScrollLock(mask, null);
 
   const box = document.createElement("div");
   box.style.cssText =
-    "width:380px;max-width:calc(100vw - 40px);background:#ffffff;border-radius:16px;" +
-    "padding:24px;box-shadow:0 20px 45px -10px rgba(15,23,42,0.25),0 0 0 1px rgba(15,23,42,0.06);box-sizing:border-box;animation:lsmFadeIn .2s ease-out;";
+    "width:380px;max-width:calc(100vw - 32px);background:#faf9f5;border:1px solid #e3e1db;border-radius:16px;" +
+    "padding:24px;box-shadow:0 20px 45px -10px rgba(36,35,31,0.18),0 1px 3px rgba(0,0,0,0.04);box-sizing:border-box;animation:lsmFadeIn .2s cubic-bezier(0.16,1,0.3,1);";
 
   const title = document.createElement("div");
-  title.innerHTML = "🔄 <span style='color:#0f172a;font-size:16px;font-weight:700;'>恢复后自动刷新设置</span>";
+  title.innerHTML = "🔄 <span style='color:#24231f;font-size:15px;font-weight:600;'>恢复后自动刷新设置</span>";
   title.style.cssText = "margin-bottom:10px;display:flex;align-items:center;gap:6px;";
 
   const desc = document.createElement("div");
   desc.innerHTML =
-    `当前状态：<strong style="color:${isAutoReload ? "#16a34a" : "#64748b"};">${isAutoReload ? "已开启自动刷新/跳转（无需二次弹窗确认）" : "不默认刷新（恢复后弹窗提示是否刷新）"}</strong><br>` +
-    `点击确认将切换为：<strong style="color:#2563eb;">${targetState ? "恢复后直接自动刷新/跳转" : "恢复后二次弹窗确认刷新"}</strong>。`;
-  desc.style.cssText = "font-size:13px;color:#64748b;line-height:1.6;margin-bottom:18px;";
+    `当前状态：<strong style="color:${isAutoReload ? "#5e9f7e" : "#787670"};">${isAutoReload ? "已开启自动刷新/跳转（无需二次弹窗确认）" : "不默认刷新（恢复后弹窗提示是否刷新）"}</strong><br>` +
+    `点击确认将切换为：<strong style="color:#c56473;">${targetState ? "恢复后直接自动刷新/跳转" : "恢复后二次弹窗确认刷新"}</strong>。`;
+  desc.style.cssText = "font-size:13px;color:#5c5a55;line-height:1.6;margin-bottom:18px;";
 
   const confirmBtn = document.createElement("button");
   confirmBtn.textContent = targetState ? "确认切换为「自动刷新/跳转」" : "确认切换为「不默认刷新」";
   confirmBtn.style.cssText =
-    "display:block;width:100%;padding:10px 0;margin-bottom:10px;border:none;border-radius:10px;" +
-    "background:linear-gradient(135deg,#3b82f6,#2563eb);color:#ffffff;font-size:13px;cursor:pointer;font-weight:600;box-shadow:0 2px 8px rgba(37,99,235,0.25);";
+    "display:block;width:100%;padding:9px 0;margin-bottom:9px;border:1px solid rgba(197,100,115,0.3);border-radius:10px;" +
+    "background:rgba(197,100,115,0.08);color:#c56473;font-size:13px;cursor:pointer;font-weight:500;transition:all .2s cubic-bezier(0.22,1,0.36,1);";
+  confirmBtn.addEventListener("mouseenter", () => {
+    confirmBtn.style.background = "rgba(197,100,115,0.14)";
+    confirmBtn.style.borderColor = "rgba(197,100,115,0.45)";
+  });
+  confirmBtn.addEventListener("mouseleave", () => {
+    confirmBtn.style.background = "rgba(197,100,115,0.08)";
+    confirmBtn.style.borderColor = "rgba(197,100,115,0.3)";
+  });
 
   const cancelBtn = document.createElement("button");
   cancelBtn.textContent = "取消";
   cancelBtn.style.cssText =
-    "display:block;width:100%;padding:10px 0;margin-top:4px;border:none;background:none;" +
-    "color:#94a3b8;font-size:12px;cursor:pointer;";
+    "display:block;width:100%;padding:8px 0;margin-top:4px;border:none;background:none;" +
+    "color:#787670;font-size:12px;cursor:pointer;transition:color .15s;";
+  cancelBtn.addEventListener("mouseenter", () => cancelBtn.style.color = "#24231f");
+  cancelBtn.addEventListener("mouseleave", () => cancelBtn.style.color = "#787670");
 
   const close = () => mask.remove();
 
@@ -844,9 +1441,6 @@ function showToggleAutoReloadDialog() {
   document.documentElement.appendChild(mask);
 }
 
-// =========================================================================
-// 主应用逻辑初始化
-// =========================================================================
 async function initApp() {
   if (document.getElementById("lsm-session-manager-root")) {
     if (LSM_UI && LSM_UI.ball) {
@@ -2142,6 +2736,7 @@ async function initApp() {
   const container = document.createElement("div");
   container.id = "lsm-session-manager-root";
   const shadow = container.attachShadow({ mode: "open" });
+  ThemeEngine.bindShadow(shadow, uid);
   document.documentElement.appendChild(container);
 
   const style = document.createElement("style");
@@ -2150,12 +2745,14 @@ async function initApp() {
       all: initial;
       display: block;
       box-sizing: border-box;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
-      color: #0f172a;
+      font-family: var(--lsm-font-family, system-ui, -apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", "Segoe UI", Roboto, Helvetica, Arial, sans-serif);
+      color: var(--lsm-text-primary, #24231f);
       font-size: 13px;
       line-height: 1.5;
       text-align: left;
       -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      letter-spacing: 0.01em;
     }
     #${uid}-root *, #${uid}-root *::before, #${uid}-root *::after {
       box-sizing: border-box;
@@ -2164,22 +2761,34 @@ async function initApp() {
       font-family: inherit;
     }
 
-    /* 滚动条美化 */
-    .${uid}-content::-webkit-scrollbar {
-      width: 6px;
+    /* 全局滚动条通用美化 (Shadow DOM 内部全部容器与列表) */
+    #${uid}-root * {
+      scrollbar-width: thin;
+      scrollbar-color: var(--lsm-border-hover, #d0cec6) transparent;
     }
-    .${uid}-content::-webkit-scrollbar-track {
+    #${uid}-root *::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    #${uid}-root *::-webkit-scrollbar-track {
+      background: transparent;
+      border-radius: 9999px;
+    }
+    #${uid}-root *::-webkit-scrollbar-thumb {
+      background-color: var(--lsm-border-hover, #d0cec6);
+      border-radius: 9999px;
+      border: 1px solid transparent;
+      background-clip: padding-box;
+      transition: background-color 0.2s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+    #${uid}-root *::-webkit-scrollbar-thumb:hover {
+      background-color: var(--lsm-accent, #c56473);
+    }
+    #${uid}-root *::-webkit-scrollbar-corner {
       background: transparent;
     }
-    .${uid}-content::-webkit-scrollbar-thumb {
-      background: #cbd5e1;
-      border-radius: 4px;
-    }
-    .${uid}-content::-webkit-scrollbar-thumb:hover {
-      background: #94a3b8;
-    }
 
-    /* 悬浮球 */
+    /* 悬浮球 (动态主题变量驱动) */
     #${uid}-ball {
       position: fixed;
       left: auto;
@@ -2187,26 +2796,28 @@ async function initApp() {
       right: 25px;
       bottom: 80px;
       z-index: 2147483646;
-      width: 50px;
-      height: 50px;
+      width: 48px;
+      height: 48px;
       border-radius: 50%;
-      background: linear-gradient(135deg, #1e40af 0%, #2563eb 50%, #3b82f6 100%);
-      color: #ffffff;
-      font-weight: 700;
-      font-size: 14px;
+      background: var(--lsm-bg-paper, #faf9f5);
+      border: 1px solid var(--lsm-accent-border, rgba(197, 100, 115, 0.28));
+      color: var(--lsm-accent, #c56473);
+      font-weight: 600;
+      font-size: 13px;
       display: flex;
       align-items: center;
       justify-content: center;
-      box-shadow: 0 8px 24px -4px rgba(37, 99, 235, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.2) inset;
+      box-shadow: 0 6px 20px -2px var(--lsm-accent-glow, rgba(197, 100, 115, 0.2)), 0 2px 6px rgba(0, 0, 0, 0.05);
       cursor: grab;
       user-select: none;
-      opacity: 0.65;
-      transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.2s ease, opacity 0.25s ease, left 0.3s cubic-bezier(0.2, 0, 0, 1), top 0.3s cubic-bezier(0.2, 0, 0, 1);
+      opacity: 0.75;
+      transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.2s ease, opacity 0.25s ease, left 0.3s cubic-bezier(0.2, 0, 0, 1), top 0.3s cubic-bezier(0.2, 0, 0, 1), border-color 0.2s ease;
     }
     #${uid}-ball:hover {
       opacity: 1;
-      transform: scale(1.06);
-      box-shadow: 0 12px 30px -4px rgba(37, 99, 235, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.3) inset;
+      transform: scale(1.05);
+      box-shadow: 0 10px 28px -4px var(--lsm-accent-glow, rgba(197, 100, 115, 0.32)), 0 2px 8px rgba(0, 0, 0, 0.08);
+      border-color: var(--lsm-accent, rgba(197, 100, 115, 0.55));
     }
     #${uid}-ball.dragging {
       opacity: 1;
@@ -2215,11 +2826,11 @@ async function initApp() {
       transition: none;
     }
     #${uid}-ball svg {
-      width: 24px;
-      height: 24px;
+      width: 22px;
+      height: 22px;
       fill: currentColor;
       pointer-events: none;
-      filter: drop-shadow(0 2px 4px rgba(0,0,0,0.15));
+      filter: drop-shadow(0 1px 2px var(--lsm-accent-glow, rgba(197, 100, 115, 0.15)));
     }
 
     /* 悬浮球右上角微型关闭/菜单按钮 */
@@ -2227,26 +2838,26 @@ async function initApp() {
       position: absolute;
       top: -3px;
       right: -3px;
-      width: 18px;
-      height: 18px;
+      width: 17px;
+      height: 17px;
       border-radius: 50%;
-      line-height: 16px;
-      background: #0f172a;
-      color: #ffffff;
+      line-height: 15px;
+      background: var(--lsm-text-primary, #24231f);
+      color: var(--lsm-bg-paper, #faf9f5);
       font-size: 11px;
       text-align: center;
       cursor: pointer;
       display: none;
       z-index: 3;
-      border: 1.5px solid #ffffff;
-      box-shadow: 0 2px 6px rgba(0,0,0,0.25);
+      border: 1.5px solid var(--lsm-bg-paper, #faf9f5);
+      box-shadow: 0 2px 5px rgba(0,0,0,0.15);
       transition: background 0.15s ease, transform 0.15s ease;
     }
     #${uid}-ball:hover .${uid}-ball-close {
       display: block;
     }
     .${uid}-ball-close:hover {
-      background: #e11d48;
+      background: var(--lsm-color-danger, #a64953);
       transform: scale(1.15);
     }
 
@@ -2255,10 +2866,12 @@ async function initApp() {
       position: absolute;
       top: -3px;
       left: -3px;
-      background: linear-gradient(135deg, #f43f5e, #e11d48);
+      background: var(--lsm-accent, #c56473);
       color: #ffffff;
       font-size: 10px;
-      font-weight: 700;
+      font-weight: 600;
+      font-family: ui-monospace, "Cascadia Code PL", Consolas, monospace;
+      font-variant-numeric: tabular-nums;
       min-width: 18px;
       height: 18px;
       border-radius: 9999px;
@@ -2266,8 +2879,8 @@ async function initApp() {
       align-items: center;
       justify-content: center;
       padding: 0 4px;
-      border: 2px solid #ffffff;
-      box-shadow: 0 2px 6px rgba(225, 29, 72, 0.4);
+      border: 1.5px solid var(--lsm-bg-paper, #faf9f5);
+      box-shadow: 0 2px 6px var(--lsm-accent-glow, rgba(197, 100, 115, 0.35));
     }
 
     /* 悬浮球快捷菜单遮罩与弹窗 */
@@ -2275,7 +2888,7 @@ async function initApp() {
       position: fixed;
       inset: 0;
       z-index: 2147483646;
-      background: rgba(15, 23, 42, 0.45);
+      background: rgba(20, 19, 18, 0.45);
       backdrop-filter: blur(6px);
       -webkit-backdrop-filter: blur(6px);
     }
@@ -2286,17 +2899,19 @@ async function initApp() {
       top: 45%;
       transform: translate(-50%, -50%);
       z-index: 2147483647;
-      background: #ffffff;
-      border-radius: 16px;
-      box-shadow: 0 20px 45px -10px rgba(15, 23, 42, 0.25), 0 0 0 1px rgba(15, 23, 42, 0.06);
+      background: var(--lsm-bg-paper, #faf9f5);
+      border: 1px solid var(--lsm-border, #e3e1db);
+      border-radius: var(--lsm-radius-window, 16px);
+      box-shadow: 0 20px 45px -10px rgba(0, 0, 0, 0.18), 0 1px 3px rgba(0,0,0,0.04);
       padding: 18px;
       width: 280px;
+      animation: lsmFadeIn .2s cubic-bezier(0.16, 1, 0.3, 1);
     }
     .${uid}-ball-menu-title {
-      font-weight: 700;
+      font-weight: 600;
       margin: 0 0 12px;
       font-size: 14px;
-      color: #0f172a;
+      color: var(--lsm-text-primary, #24231f);
       display: flex;
       align-items: center;
       gap: 6px;
@@ -2306,32 +2921,33 @@ async function initApp() {
       align-items: center;
       width: 100%;
       margin-top: 8px;
-      padding: 9px 12px;
-      border: 1px solid #e2e8f0;
-      border-radius: 10px;
-      background: #f8fafc;
+      padding: 8px 12px;
+      border: 1px solid var(--lsm-border, #e3e1db);
+      border-radius: var(--lsm-radius-btn, 8px);
+      background: var(--lsm-bg-card, #ffffff);
       cursor: pointer;
       font-size: 12px;
       font-weight: 500;
       text-align: left;
-      color: #334155;
-      transition: all 0.15s ease;
+      color: var(--lsm-text-primary, #403f3a);
+      transition: all 0.15s cubic-bezier(0.22, 1, 0.36, 1);
     }
     .${uid}-ball-menu button:hover {
-      background: #f1f5f9;
-      border-color: #cbd5e1;
-      color: #0f172a;
+      background: var(--lsm-bg-hover, #f0efeb);
+      border-color: var(--lsm-border-hover, #d0cec6);
+      color: var(--lsm-text-primary, #24231f);
     }
     .${uid}-ball-menu button[data-a="forever"] {
-      border-color: #fecdd3;
-      background: #fff1f2;
-      color: #e11d48;
+      border-color: var(--lsm-border-danger, rgba(166, 73, 83, 0.2));
+      background: var(--lsm-bg-danger, rgba(166, 73, 83, 0.06));
+      color: var(--lsm-color-danger, #a64953);
     }
     .${uid}-ball-menu button[data-a="forever"]:hover {
-      background: #ffe4e6;
+      background: var(--lsm-bg-danger, rgba(166, 73, 83, 0.12));
+      border-color: var(--lsm-color-danger, rgba(166, 73, 83, 0.35));
     }
 
-    /* 主管理窗口 */
+    /* 主管理窗口 (Paper Card 架构) */
     #${uid}-window {
       position: fixed;
       left: auto;
@@ -2343,12 +2959,13 @@ async function initApp() {
       height: 560px;
       max-width: calc(100vw - 20px);
       max-height: calc(100vh - 30px);
-      background: #ffffff;
-      border-radius: 16px;
+      background: var(--lsm-bg-paper, #faf9f5);
+      border: 1px solid var(--lsm-border, #e3e1db);
+      border-radius: var(--lsm-radius-window, 16px);
       overflow: hidden;
       display: flex;
       flex-direction: column;
-      box-shadow: 0 25px 50px -12px rgba(15, 23, 42, 0.25), 0 0 0 1px rgba(15, 23, 42, 0.08);
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.18), 0 1px 3px rgba(0, 0, 0, 0.04);
       overscroll-behavior: contain;
       touch-action: none;
     }
@@ -2362,14 +2979,25 @@ async function initApp() {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 13px 18px;
-      background: linear-gradient(135deg, #0f172a 0%, #1e293b 60%, #334155 100%);
-      color: #f8fafc;
-      font-size: 14px;
+      padding: 12px 18px;
+      background: var(--lsm-bg-header, #f0efeb);
+      color: var(--lsm-text-primary, #24231f);
+      font-size: 13.5px;
       font-weight: 600;
       cursor: grab;
       user-select: none;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      border-bottom: 1px solid var(--lsm-border, #e3e1db);
+      position: relative;
+    }
+    #${uid}-header::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 1.5px;
+      background: linear-gradient(90deg, transparent 0%, var(--lsm-accent, #c56473) 20%, var(--lsm-accent, #c56473) 80%, transparent 100%);
+      opacity: 0.7;
     }
     #${uid}-header.dragging {
       cursor: grabbing;
@@ -2383,18 +3011,17 @@ async function initApp() {
       display: flex;
       align-items: center;
       gap: 6px;
-      letter-spacing: 0.2px;
+      letter-spacing: 0.02em;
     }
     .${uid}-domain-tag {
-      background: rgba(255, 255, 255, 0.12);
-      border: 1px solid rgba(255, 255, 255, 0.18);
-      backdrop-filter: blur(8px);
-      -webkit-backdrop-filter: blur(8px);
-      color: #f8fafc;
+      background: var(--lsm-accent-bg, rgba(197, 100, 115, 0.08));
+      border: 1px solid var(--lsm-accent-border, rgba(197, 100, 115, 0.2));
+      color: var(--lsm-accent, #c56473);
       font-size: 11px;
-      padding: 2px 10px;
-      border-radius: 9999px;
+      padding: 2px 9px;
+      border-radius: 6px;
       font-weight: 500;
+      font-family: ui-monospace, "Cascadia Code PL", Consolas, monospace;
       max-width: 180px;
       white-space: nowrap;
       overflow: hidden;
@@ -2406,12 +3033,12 @@ async function initApp() {
       gap: 6px;
     }
     .${uid}-header-actions button {
-      border: none;
-      background: rgba(255, 255, 255, 0.12);
-      color: #f8fafc;
-      border-radius: 8px;
-      width: 26px;
-      height: 26px;
+      border: 1px solid rgba(0, 0, 0, 0.08);
+      background: transparent;
+      color: var(--lsm-text-muted, #787670);
+      border-radius: 6px;
+      width: 24px;
+      height: 24px;
       display: flex;
       align-items: center;
       justify-content: center;
@@ -2420,20 +3047,20 @@ async function initApp() {
       transition: all 0.15s ease;
     }
     .${uid}-header-actions button:hover {
-      background: rgba(255, 255, 255, 0.25);
-      transform: scale(1.05);
+      background: var(--lsm-border, #e3e1db);
+      color: var(--lsm-text-primary, #24231f);
     }
 
     /* 状态条 */
     .${uid}-status-bar {
       padding: 7px 18px;
-      background: #f8fafc;
-      border-bottom: 1px solid #f1f5f9;
+      background: var(--lsm-bg-paper, #faf9f5);
+      border-bottom: 1px solid var(--lsm-border, #e3e1db);
       display: flex;
       align-items: center;
       justify-content: space-between;
       font-size: 11px;
-      color: #64748b;
+      color: var(--lsm-text-muted, #787670);
       flex: none;
     }
     .${uid}-status-item {
@@ -2443,25 +3070,25 @@ async function initApp() {
       font-weight: 500;
     }
     .${uid}-dot {
-      width: 7px;
-      height: 7px;
+      width: 6px;
+      height: 6px;
       border-radius: 50%;
       display: inline-block;
     }
     .${uid}-dot-green {
-      background: #10b981;
-      box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.2);
+      background: var(--lsm-color-success, #5e9f7e);
+      box-shadow: 0 0 0 2px var(--lsm-border-success, rgba(94, 159, 126, 0.2));
     }
     .${uid}-dot-amber {
-      background: #f59e0b;
-      box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.2);
+      background: var(--lsm-color-warning, #a87a3d);
+      box-shadow: 0 0 0 2px var(--lsm-border-warning, rgba(168, 122, 61, 0.2));
     }
 
     /* 操作工具栏 */
     .${uid}-toolbar {
       padding: 10px 18px;
-      background: #ffffff;
-      border-bottom: 1px solid #f1f5f9;
+      background: var(--lsm-bg-paper, #faf9f5);
+      border-bottom: 1px solid var(--lsm-border, #e3e1db);
       display: flex;
       flex-direction: column;
       gap: 8px;
@@ -2478,64 +3105,67 @@ async function initApp() {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      gap: 6px;
-      padding: 7px 12px;
+      gap: 5px;
+      padding: 6px 12px;
       font-size: 12px;
-      font-weight: 600;
-      border-radius: 8px;
+      font-weight: 500;
+      border-radius: var(--lsm-radius-btn, 8px);
       border: 1px solid transparent;
       cursor: pointer;
       user-select: none;
       white-space: nowrap;
-      transition: all 0.15s ease;
+      transition: all 0.2s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+    .${uid}-btn:active {
+      transform: translateY(1px);
     }
     .${uid}-btn-primary {
-      background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%) !important;
-      color: #ffffff !important;
-      box-shadow: 0 2px 8px rgba(37, 99, 235, 0.25);
+      background: var(--lsm-accent-bg, rgba(197, 100, 115, 0.08)) !important;
+      color: var(--lsm-accent, #c56473) !important;
+      border: 1px solid var(--lsm-accent-border, rgba(197, 100, 115, 0.3)) !important;
     }
     .${uid}-btn-primary:hover {
-      background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%) !important;
-      box-shadow: 0 4px 12px rgba(37, 99, 235, 0.35);
-      color: #ffffff !important;
+      background: var(--lsm-accent-hover-bg, rgba(197, 100, 115, 0.14)) !important;
+      border-color: var(--lsm-accent, #c56473) !important;
+      color: var(--lsm-accent, #c56473) !important;
     }
     .${uid}-btn-secondary {
-      background: #f8fafc;
-      color: #334155;
-      border-color: #e2e8f0;
+      background: transparent;
+      color: var(--lsm-text-primary, #403f3a);
+      border: 1px solid var(--lsm-border, #e3e1db);
     }
     .${uid}-btn-secondary:hover {
-      background: #f1f5f9;
-      border-color: #cbd5e1;
-      color: #0f172a;
+      background: var(--lsm-bg-hover, #f0efeb);
+      border-color: var(--lsm-border-hover, #d0cec6);
+      color: var(--lsm-text-primary, #24231f);
     }
     .${uid}-btn-danger {
-      background: #fff1f2;
-      color: #e11d48;
-      border-color: #fecdd3;
+      background: var(--lsm-bg-danger, rgba(166, 73, 83, 0.08));
+      color: var(--lsm-color-danger, #a64953);
+      border: 1px solid var(--lsm-border-danger, rgba(166, 73, 83, 0.25));
     }
     .${uid}-btn-danger:hover {
-      background: #ffe4e6;
-      border-color: #fda4af;
+      background: var(--lsm-bg-danger, rgba(166, 73, 83, 0.14));
+      border-color: var(--lsm-color-danger, rgba(166, 73, 83, 0.4));
     }
     .${uid}-btn-restore-pill {
-      background: #f0fdf4 !important;
-      color: #15803d !important;
-      border-color: #bbf7d0 !important;
-      font-weight: 600;
+      background: var(--lsm-bg-success, rgba(94, 159, 126, 0.08)) !important;
+      color: var(--lsm-color-success, #5e9f7e) !important;
+      border: 1px solid var(--lsm-border-success, rgba(94, 159, 126, 0.28)) !important;
+      font-weight: 500;
     }
     .${uid}-btn-restore-pill:hover {
-      background: #dcfce7 !important;
-      border-color: #86efac !important;
+      background: var(--lsm-bg-success, rgba(94, 159, 126, 0.16)) !important;
+      border-color: var(--lsm-color-success, rgba(94, 159, 126, 0.45)) !important;
     }
     .${uid}-btn-sm {
-      padding: 4px 10px;
+      padding: 4px 9px;
       font-size: 11px;
       border-radius: 6px;
     }
     .${uid}-btn-icon {
-      padding: 7px 9px !important;
-      min-width: 32px;
+      padding: 6px 8px !important;
+      min-width: 28px;
       display: inline-flex;
       align-items: center;
       justify-content: center;
@@ -2552,12 +3182,14 @@ async function initApp() {
       position: absolute;
       top: calc(100% + 6px);
       right: 0;
-      min-width: 175px;
-      background: #ffffff;
-      border: 1px solid #e2e8f0;
-      border-radius: 12px;
-      padding: 6px;
-      box-shadow: 0 12px 30px -4px rgba(15, 23, 42, 0.18), 0 0 0 1px rgba(15, 23, 42, 0.05);
+      min-width: 180px;
+      background: var(--lsm-bg-paper, #faf9f5);
+      border: 1px solid var(--lsm-border, #e3e1db);
+      border-radius: var(--lsm-radius-card, 12px);
+      padding: 5px;
+      box-shadow: 0 12px 30px -4px rgba(0, 0, 0, 0.16), 0 1px 3px rgba(0,0,0,0.04);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
       z-index: 50;
       display: flex;
       flex-direction: column;
@@ -2570,32 +3202,32 @@ async function initApp() {
       display: flex;
       align-items: center;
       gap: 8px;
-      padding: 8px 10px;
+      padding: 7px 10px;
       font-size: 12px;
       font-weight: 500;
-      color: #334155;
-      border-radius: 8px;
+      color: var(--lsm-text-primary, #403f3a);
+      border-radius: 7px;
       cursor: pointer;
       user-select: none;
       transition: all 0.12s ease;
       white-space: nowrap;
     }
     .${uid}-dropdown-item:hover {
-      background: #f1f5f9;
-      color: #0f172a;
+      background: var(--lsm-bg-hover, #f0efeb);
+      color: var(--lsm-text-primary, #24231f);
     }
     .${uid}-dropdown-divider {
       height: 1px;
-      background: #f1f5f9;
-      margin: 4px 0;
+      background: var(--lsm-border, #e3e1db);
+      margin: 3px 0;
     }
     .${uid}-item-accent {
-      color: #15803d !important;
-      font-weight: 600;
+      color: var(--lsm-accent, #c56473) !important;
+      font-weight: 500;
     }
     .${uid}-item-accent:hover {
-      background: #f0fdf4 !important;
-      color: #166534 !important;
+      background: var(--lsm-accent-bg, rgba(197, 100, 115, 0.08)) !important;
+      color: var(--lsm-accent, #c56473) !important;
     }
 
     /* 移动端与小屏幕自适应响应式布局 */
@@ -2625,13 +3257,13 @@ async function initApp() {
         gap: 6px;
       }
       .${uid}-btn {
-        padding: 6px 8px;
+        padding: 5px 8px;
         font-size: 11px;
         gap: 4px;
       }
       .${uid}-content {
         padding: 10px 12px;
-        gap: 10px;
+        gap: 8px;
       }
       .${uid}-card {
         padding: 10px 12px;
@@ -2659,7 +3291,7 @@ async function initApp() {
       }
     }
 
-    /* 搜索栏精细化美化 */
+    /* 搜索栏 */
     .${uid}-search-wrap {
       position: relative;
       display: flex;
@@ -2671,7 +3303,7 @@ async function initApp() {
       position: absolute;
       left: 10px;
       pointer-events: none;
-      color: #94a3b8;
+      color: var(--lsm-text-placeholder, #a8a69f);
       display: flex;
       align-items: center;
       justify-content: center;
@@ -2681,36 +3313,37 @@ async function initApp() {
       width: 100%;
       height: 32px;
       padding: 0 28px 0 32px;
-      border: 1px solid #e2e8f0;
-      border-radius: 8px;
-      background: #f8fafc;
+      border: 1px solid var(--lsm-border, #e3e1db);
+      border-radius: var(--lsm-radius-btn, 8px);
+      background: var(--lsm-bg-card, #ffffff);
+      background-image: linear-gradient(180deg, var(--lsm-accent-glow, rgba(197, 100, 115, 0.03)) 0%, transparent 26%);
       font-size: 12px;
-      color: #1e293b;
+      color: var(--lsm-text-primary, #24231f);
       outline: none;
       box-sizing: border-box;
-      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+      transition: border-color 0.2s, box-shadow 0.2s;
     }
     .${uid}-search-input::placeholder {
-      color: #94a3b8;
+      color: var(--lsm-text-placeholder, #a8a69f);
       font-size: 11px;
     }
     .${uid}-search-input:focus {
-      background: #ffffff;
-      border-color: #3b82f6;
-      box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+      background: var(--lsm-bg-card, #ffffff);
+      border-color: var(--lsm-accent-border, rgba(197, 100, 115, 0.35));
+      box-shadow: 0 0 0 3px var(--lsm-accent-glow, rgba(197, 100, 115, 0.1));
     }
     .${uid}-search-wrap:focus-within .${uid}-search-icon {
-      color: #3b82f6;
+      color: var(--lsm-accent, #c56473);
     }
     .${uid}-search-clear {
       position: absolute;
       right: 7px;
-      width: 18px;
-      height: 18px;
+      width: 17px;
+      height: 17px;
       border-radius: 50%;
       border: none;
-      background: #e2e8f0;
-      color: #64748b;
+      background: var(--lsm-border, #e3e1db);
+      color: var(--lsm-text-muted, #787670);
       font-size: 10px;
       cursor: pointer;
       display: flex;
@@ -2720,8 +3353,8 @@ async function initApp() {
       transition: all 0.15s ease;
     }
     .${uid}-search-clear:hover {
-      background: #cbd5e1;
-      color: #0f172a;
+      background: var(--lsm-border-hover, #d0cec6);
+      color: var(--lsm-text-primary, #24231f);
       transform: scale(1.08);
     }
     .${uid}-search-clear.hidden {
@@ -2730,38 +3363,38 @@ async function initApp() {
 
     /* 记录列表区域 */
     .${uid}-content {
-      padding: 14px 18px;
+      padding: 12px 18px;
       overflow-y: auto;
       flex: 1;
       display: flex;
       flex-direction: column;
-      gap: 12px;
+      gap: 10px;
       min-height: 0;
-      background: #f8fafc;
+      background: var(--lsm-bg-list, #f9f8f5);
       overscroll-behavior: contain;
       -webkit-overflow-scrolling: touch;
       touch-action: pan-y;
     }
     .${uid}-card {
-      background: #ffffff;
-      border: 1px solid #e2e8f0;
-      border-radius: 12px;
+      background: var(--lsm-bg-card, #ffffff);
+      border: 1px solid var(--lsm-border, #e3e1db);
+      border-radius: var(--lsm-radius-card, 12px);
       padding: 12px 14px;
       display: flex;
       flex-direction: column;
       gap: 8px;
-      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
-      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
+      transition: all 0.2s cubic-bezier(0.22, 1, 0.36, 1);
     }
     .${uid}-card:hover {
-      border-color: #cbd5e1;
-      transform: translateY(-2px);
-      box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.08);
+      border-color: var(--lsm-border-hover, #d0cec6);
+      transform: translateY(-1px);
+      box-shadow: 0 6px 20px -2px rgba(0, 0, 0, 0.06);
     }
     .${uid}-card.${uid}-card-active {
-      border-color: #86efac;
-      background: linear-gradient(180deg, #f0fdf4 0%, #ffffff 60%);
-      box-shadow: 0 4px 14px -2px rgba(34, 197, 94, 0.15);
+      border-color: var(--lsm-border-success, rgba(94, 159, 126, 0.38));
+      background: var(--lsm-bg-active-card, linear-gradient(180deg, rgba(94, 159, 126, 0.05) 0%, #ffffff 60%));
+      box-shadow: 0 4px 14px -2px var(--lsm-border-success, rgba(94, 159, 126, 0.12));
     }
     .${uid}-badge-active {
       display: inline-flex;
@@ -2769,10 +3402,10 @@ async function initApp() {
       padding: 1px 6px;
       border-radius: 4px;
       font-size: 10px;
-      font-weight: 600;
-      background: #dcfce7;
-      color: #15803d;
-      border: 1px solid #bbf7d0;
+      font-weight: 500;
+      background: var(--lsm-bg-success, rgba(94, 159, 126, 0.12));
+      color: var(--lsm-color-success, #5e9f7e);
+      border: 1px solid var(--lsm-border-success, rgba(94, 159, 126, 0.25));
       margin-left: 4px;
       flex-shrink: 0;
     }
@@ -2783,9 +3416,9 @@ async function initApp() {
       gap: 8px;
     }
     .${uid}-card-name {
-      font-weight: 700;
+      font-weight: 600;
       font-size: 13px;
-      color: #0f172a;
+      color: var(--lsm-text-primary, #24231f);
       word-break: break-all;
       display: flex;
       align-items: center;
@@ -2793,7 +3426,9 @@ async function initApp() {
     }
     .${uid}-card-time {
       font-size: 11px;
-      color: #94a3b8;
+      color: var(--lsm-text-muted, #787670);
+      font-family: ui-monospace, "Cascadia Code PL", Consolas, monospace;
+      font-variant-numeric: tabular-nums;
       flex-shrink: 0;
     }
     
@@ -2810,29 +3445,31 @@ async function initApp() {
       gap: 4px;
       font-size: 11px;
       font-weight: 500;
-      padding: 2px 8px;
-      border-radius: 9999px;
-      line-height: 1.4;
+      padding: 2px 7px;
+      border-radius: 6px;
+      line-height: 1.35;
+      font-family: ui-monospace, "Cascadia Code PL", Consolas, monospace;
+      font-variant-numeric: tabular-nums;
     }
     .${uid}-chip-cookie {
-      background: #fffbeb;
-      color: #b45309;
-      border: 1px solid #fef3c7;
+      background: var(--lsm-bg-warning, rgba(168, 122, 61, 0.08));
+      color: var(--lsm-color-warning, #a87a3d);
+      border: 1px solid var(--lsm-border-warning, rgba(168, 122, 61, 0.2));
     }
     .${uid}-chip-local {
-      background: #f0fdf4;
-      color: #15803d;
-      border: 1px solid #dcfce7;
+      background: var(--lsm-bg-success, rgba(94, 159, 126, 0.08));
+      color: var(--lsm-color-success, #5e9f7e);
+      border: 1px solid var(--lsm-border-success, rgba(94, 159, 126, 0.2));
     }
     .${uid}-chip-session {
-      background: #faf5ff;
-      color: #7e22ce;
-      border: 1px solid #f3e8ff;
+      background: var(--lsm-bg-info, rgba(61, 104, 150, 0.08));
+      color: var(--lsm-color-info, #3d6896);
+      border: 1px solid var(--lsm-border-info, rgba(61, 104, 150, 0.2));
     }
     .${uid}-chip-encrypted {
-      background: #f0f9ff;
-      color: #0284c7;
-      border: 1px solid #e0f2fe;
+      background: var(--lsm-accent-bg, rgba(197, 100, 115, 0.08));
+      color: var(--lsm-accent, #c56473);
+      border: 1px solid var(--lsm-accent-border, rgba(197, 100, 115, 0.2));
     }
 
     /* 来源链接小标签 */
@@ -2840,16 +3477,16 @@ async function initApp() {
       display: flex;
       align-items: center;
       gap: 6px;
-      background: #f8fafc;
-      border: 1px solid #f1f5f9;
+      background: var(--lsm-bg-header, #f0efeb);
+      border: 1px solid var(--lsm-border, #e3e1db);
       border-radius: 6px;
-      padding: 4px 8px;
+      padding: 3px 8px;
       margin-top: 2px;
       font-size: 11px;
-      color: #64748b;
+      color: var(--lsm-text-muted, #787670);
     }
     .${uid}-card-url {
-      color: #2563eb;
+      color: var(--lsm-accent, #c56473);
       text-decoration: none;
       word-break: break-all;
       overflow: hidden;
@@ -2860,7 +3497,6 @@ async function initApp() {
     }
     .${uid}-card-url:hover {
       text-decoration: underline;
-      color: #1d4ed8;
     }
 
     /* 卡片操作栏 */
@@ -2868,8 +3504,8 @@ async function initApp() {
       display: flex;
       align-items: center;
       justify-content: flex-end;
-      gap: 6px;
-      border-top: 1px solid #f1f5f9;
+      gap: 5px;
+      border-top: 1px solid var(--lsm-border, #f0efeb);
       padding-top: 8px;
       margin-top: 2px;
     }
@@ -2879,23 +3515,27 @@ async function initApp() {
       align-items: center;
       justify-content: center;
       padding: 50px 0;
-      color: #94a3b8;
+      color: var(--lsm-text-placeholder, #a8a69f);
       text-align: center;
-      gap: 10px;
+      gap: 8px;
     }
 
-    /* 内置保存抽屉弹窗 */
-    .${uid}-save-dialog {
+    /* 抽屉基础样式 */
+    .${uid}-save-dialog,
+    .${uid}-qr-dialog,
+    .${uid}-scan-dialog,
+    .${uid}-sync-dialog,
+    .${uid}-theme-dialog {
       position: absolute;
       top: 0;
       left: 0;
       right: 0;
       bottom: 0;
-      background: #ffffff;
+      background: var(--lsm-bg-paper, #faf9f5);
       display: flex;
       flex-direction: column;
-      padding: 24px;
-      gap: 16px;
+      padding: 20px;
+      gap: 14px;
       transform: translateY(100%);
       transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
       z-index: 10;
@@ -2903,18 +3543,52 @@ async function initApp() {
       overflow-y: auto;
       -webkit-overflow-scrolling: touch;
       touch-action: pan-y;
+      border-top: 1px solid var(--lsm-border, #e3e1db);
+      box-sizing: border-box;
     }
-    .${uid}-save-dialog.open {
+    .${uid}-save-dialog.open,
+    .${uid}-qr-dialog.open,
+    .${uid}-scan-dialog.open,
+    .${uid}-sync-dialog.open,
+    .${uid}-theme-dialog.open {
       transform: translateY(0);
     }
+    .${uid}-dialog-header,
     .${uid}-save-dialog-title {
-      font-size: 15px;
-      font-weight: 700;
-      color: #0f172a;
+      font-size: 14.5px;
+      font-weight: 600;
+      color: var(--lsm-text-primary, #24231f);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+      border-bottom: 1px solid var(--lsm-border, #e3e1db);
+      padding-bottom: 10px;
+    }
+    .${uid}-dialog-title {
+      font-size: 14.5px;
+      font-weight: 600;
+      color: var(--lsm-text-primary, #24231f);
       display: flex;
       align-items: center;
       gap: 6px;
     }
+    .${uid}-dialog-close {
+      background: none;
+      border: none;
+      font-size: 16px;
+      line-height: 1;
+      color: var(--lsm-text-muted, #787670);
+      cursor: pointer;
+      padding: 4px;
+      border-radius: 6px;
+      transition: color 0.15s ease, background 0.15s ease;
+    }
+    .${uid}-dialog-close:hover {
+      color: var(--lsm-text-primary, #24231f);
+      background: var(--lsm-bg-hover, #f0efeb);
+    }
+
     .${uid}-input-group {
       display: flex;
       flex-direction: column;
@@ -2922,21 +3596,24 @@ async function initApp() {
     }
     .${uid}-input-label {
       font-size: 12px;
-      font-weight: 600;
-      color: #334155;
+      font-weight: 500;
+      color: var(--lsm-text-secondary, #5c5a55);
     }
     .${uid}-input {
       width: 100%;
-      padding: 9px 12px;
-      border: 1px solid #cbd5e1;
-      border-radius: 8px;
-      font-size: 13px;
+      padding: 8px 12px;
+      border: 1px solid var(--lsm-border, #e3e1db);
+      border-radius: var(--lsm-radius-btn, 8px);
+      font-size: 12.5px;
       outline: none;
-      transition: all 0.15s ease;
+      background: var(--lsm-bg-card, #ffffff);
+      background-image: linear-gradient(180deg, var(--lsm-accent-glow, rgba(197, 100, 115, 0.03)) 0%, transparent 26%);
+      color: var(--lsm-text-primary, #24231f);
+      transition: border-color 0.2s, box-shadow 0.2s;
     }
     .${uid}-input:focus {
-      border-color: #3b82f6;
-      box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+      border-color: var(--lsm-accent-border, rgba(197, 100, 115, 0.35));
+      box-shadow: 0 0 0 3px var(--lsm-accent-glow, rgba(197, 100, 115, 0.1));
     }
     .${uid}-grid-preview {
       display: grid;
@@ -2945,50 +3622,30 @@ async function initApp() {
       margin-top: 4px;
     }
     .${uid}-stat-box {
-      background: #f8fafc;
-      border: 1px solid #e2e8f0;
-      border-radius: 10px;
+      background: var(--lsm-bg-card, #ffffff);
+      border: 1px solid var(--lsm-border, #e3e1db);
+      border-radius: var(--lsm-radius-card, 10px);
       padding: 10px;
       text-align: center;
     }
     .${uid}-stat-num {
       font-size: 18px;
-      font-weight: 700;
-      color: #0f172a;
+      font-weight: 600;
+      font-family: ui-monospace, "Cascadia Code PL", Consolas, monospace;
+      font-variant-numeric: tabular-nums;
+      color: var(--lsm-text-primary, #24231f);
       margin-top: 2px;
     }
     .${uid}-stat-label {
       font-size: 11px;
-      color: #64748b;
+      color: var(--lsm-text-muted, #787670);
     }
 
-    /* 快照二维码展示抽屉弹窗 */
-    .${uid}-qr-dialog {
-      position: absolute;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      background: #ffffff;
-      display: flex;
-      flex-direction: column;
-      padding: 20px;
-      gap: 12px;
-      transform: translateY(100%);
-      transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
-      z-index: 12;
-      overscroll-behavior: contain;
-      overflow-y: auto;
-      -webkit-overflow-scrolling: touch;
-      touch-action: pan-y;
-    }
-    .${uid}-qr-dialog.open {
-      transform: translateY(0);
-    }
+    /* 快照二维码展示抽屉 */
     .${uid}-qr-box {
-      background: #f8fafc;
-      border: 1px solid #e2e8f0;
-      border-radius: 12px;
+      background: var(--lsm-bg-header, #f0efeb);
+      border: 1px solid var(--lsm-border, #e3e1db);
+      border-radius: var(--lsm-radius-card, 12px);
       padding: 16px;
       display: flex;
       flex-direction: column;
@@ -2999,8 +3656,9 @@ async function initApp() {
     .${uid}-qr-canvas-wrap {
       background: #ffffff;
       padding: 10px;
-      border-radius: 12px;
-      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08), 0 0 0 1px rgba(0,0,0,0.04);
+      border: 1px solid var(--lsm-border, #e3e1db);
+      border-radius: var(--lsm-radius-card, 12px);
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.04);
       display: flex;
       align-items: center;
       justify-content: center;
@@ -3013,9 +3671,9 @@ async function initApp() {
       border-radius: 6px;
     }
     .${uid}-qr-overflow-box {
-      background: #fffbeb;
-      border: 1px solid #fde68a;
-      border-radius: 12px;
+      background: var(--lsm-bg-warning, rgba(168, 122, 61, 0.06));
+      border: 1px solid var(--lsm-border-warning, rgba(168, 122, 61, 0.25));
+      border-radius: var(--lsm-radius-card, 12px);
       padding: 16px 12px;
       display: flex;
       flex-direction: column;
@@ -3024,7 +3682,6 @@ async function initApp() {
       gap: 8px;
       text-align: center;
       max-width: 100%;
-      box-shadow: 0 2px 8px rgba(245, 158, 11, 0.08);
     }
     .${uid}-qr-chunk-player {
       display: none;
@@ -3032,11 +3689,10 @@ async function initApp() {
       align-items: center;
       gap: 10px;
       width: 100%;
-      background: #f8fafc;
-      border: 1px solid #e2e8f0;
-      border-radius: 12px;
+      background: var(--lsm-bg-card, #ffffff);
+      border: 1px solid var(--lsm-border, #e3e1db);
+      border-radius: var(--lsm-radius-card, 12px);
       padding: 12px;
-      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
     }
     .${uid}-qr-chunk-header {
       display: flex;
@@ -3044,31 +3700,32 @@ async function initApp() {
       justify-content: space-between;
       width: 100%;
       font-size: 12px;
-      color: #334155;
-      font-weight: 600;
+      color: var(--lsm-text-primary, #403f3a);
+      font-weight: 500;
     }
     .${uid}-qr-chunk-badge {
       display: inline-flex;
       align-items: center;
       gap: 5px;
-      background: #eff6ff;
-      color: #2563eb;
-      border: 1px solid #bfdbfe;
+      background: var(--lsm-accent-bg, rgba(197, 100, 115, 0.08));
+      color: var(--lsm-accent, #c56473);
+      border: 1px solid var(--lsm-accent-border, rgba(197, 100, 115, 0.2));
       padding: 3px 8px;
       border-radius: 9999px;
       font-size: 11px;
-      font-weight: 600;
+      font-weight: 500;
+      font-family: ui-monospace, "Cascadia Code PL", Consolas, monospace;
     }
     .${uid}-qr-chunk-bar-wrap {
       width: 100%;
-      height: 6px;
-      background: #e2e8f0;
+      height: 5px;
+      background: var(--lsm-border, #e3e1db);
       border-radius: 9999px;
       overflow: hidden;
     }
     .${uid}-qr-chunk-bar-fill {
       height: 100%;
-      background: linear-gradient(90deg, #3b82f6, #06b6d4);
+      background: linear-gradient(90deg, var(--lsm-accent, #c56473), var(--lsm-accent-glow, #e08c99));
       border-radius: 9999px;
       transition: width 0.15s ease;
     }
@@ -3080,72 +3737,18 @@ async function initApp() {
       width: 100%;
     }
 
-    /* 扫码与综合导入抽屉弹窗 */
-    .${uid}-scan-dialog {
-      position: absolute;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      background: #ffffff;
-      display: flex;
-      flex-direction: column;
-      padding: 20px;
-      gap: 14px;
-      transform: translateY(100%);
-      transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
-      z-index: 12;
-      overscroll-behavior: contain;
-      overflow-y: auto;
-      -webkit-overflow-scrolling: touch;
-      touch-action: pan-y;
-    }
-    .${uid}-scan-dialog.open {
-      transform: translateY(0);
-    }
-    .${uid}-dialog-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      border-bottom: 1px solid #f1f5f9;
-      padding-bottom: 10px;
-    }
-    .${uid}-dialog-title {
-      font-size: 15px;
-      font-weight: 700;
-      color: #0f172a;
-      display: flex;
-      align-items: center;
-      gap: 6px;
-    }
-    .${uid}-dialog-close {
-      background: none;
-      border: none;
-      font-size: 18px;
-      line-height: 1;
-      color: #94a3b8;
-      cursor: pointer;
-      padding: 4px;
-      border-radius: 6px;
-      transition: color 0.15s ease, background 0.15s ease;
-    }
-    .${uid}-dialog-close:hover {
-      color: #0f172a;
-      background: #f1f5f9;
-    }
-
-    /* 摄像头扫码视口与取景框 */
+    /* 摄像头扫码 */
     .${uid}-camera-viewport {
       position: relative;
       width: 100%;
       height: 220px;
-      background: #090d16;
-      border-radius: 12px;
+      background: #141312;
+      border-radius: var(--lsm-radius-card, 12px);
       overflow: hidden;
       display: flex;
       align-items: center;
       justify-content: center;
-      box-shadow: 0 4px 16px rgba(0,0,0,0.15) inset;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.25) inset;
     }
     .${uid}-camera-video {
       width: 100%;
@@ -3160,12 +3763,12 @@ async function initApp() {
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      color: #94a3b8;
+      color: #a8a69f;
       gap: 8px;
       padding: 20px;
       text-align: center;
       font-size: 12px;
-      background: rgba(15, 23, 42, 0.92);
+      background: rgba(20, 19, 18, 0.92);
       z-index: 2;
     }
     .${uid}-scan-chunk-hud {
@@ -3173,25 +3776,25 @@ async function initApp() {
       top: 8px;
       left: 8px;
       right: 8px;
-      background: rgba(15, 23, 42, 0.92);
+      background: rgba(20, 19, 18, 0.9);
       backdrop-filter: blur(8px);
-      border: 1px solid rgba(56, 189, 248, 0.5);
+      border: 1px solid var(--lsm-accent-border, rgba(197, 100, 115, 0.4));
       border-radius: 10px;
       padding: 8px 10px;
       display: flex;
       flex-direction: column;
       gap: 6px;
       z-index: 6;
-      color: #ffffff;
+      color: #faf9f5;
       box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
     }
     .${uid}-scan-chunk-title {
       font-size: 11px;
-      font-weight: 600;
+      font-weight: 500;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      color: #f1f5f9;
+      color: #faf9f5;
     }
     .${uid}-scan-chunk-chips {
       display: flex;
@@ -3208,27 +3811,28 @@ async function initApp() {
       align-items: center;
       justify-content: center;
       font-size: 9px;
-      font-weight: 700;
+      font-weight: 600;
       border-radius: 3px;
-      background: rgba(255, 255, 255, 0.12);
-      color: #94a3b8;
+      background: rgba(255, 255, 255, 0.1);
+      color: #a8a69f;
       border: 1px solid rgba(255, 255, 255, 0.1);
+      font-family: ui-monospace, "Cascadia Code PL", Consolas, monospace;
       transition: all 0.15s ease;
     }
     .${uid}-scan-chunk-dot.received {
-      background: #10b981;
+      background: var(--lsm-color-success, #5e9f7e);
       color: #ffffff;
-      border-color: #34d399;
-      box-shadow: 0 0 5px rgba(16, 185, 129, 0.7);
+      border-color: var(--lsm-border-success, #8cbea3);
+      box-shadow: 0 0 5px var(--lsm-color-success, rgba(94, 159, 126, 0.7));
       transform: scale(1.05);
     }
     .${uid}-scan-frame {
       position: absolute;
       width: 170px;
       height: 170px;
-      border: 2px solid rgba(59, 130, 246, 0.7);
+      border: 2px solid var(--lsm-accent, rgba(197, 100, 115, 0.7));
       border-radius: 12px;
-      box-shadow: 0 0 0 9999px rgba(15, 23, 42, 0.45);
+      box-shadow: 0 0 0 9999px rgba(20, 19, 18, 0.5);
       z-index: 3;
       pointer-events: none;
     }
@@ -3236,7 +3840,7 @@ async function initApp() {
       position: absolute;
       width: 16px;
       height: 16px;
-      border-color: #38bdf8;
+      border-color: var(--lsm-accent, #c56473);
       border-style: solid;
     }
     .${uid}-scan-corner-tl { top: -2px; left: -2px; border-width: 3px 0 0 3px; border-top-left-radius: 8px; }
@@ -3249,8 +3853,8 @@ async function initApp() {
       left: 6px;
       right: 6px;
       height: 2px;
-      background: linear-gradient(90deg, rgba(56,189,248,0) 0%, #38bdf8 50%, rgba(56,189,248,0) 100%);
-      box-shadow: 0 0 10px #38bdf8, 0 0 4px #0284c7;
+      background: linear-gradient(90deg, transparent 0%, var(--lsm-accent, #c56473) 50%, transparent 100%);
+      box-shadow: 0 0 10px var(--lsm-accent, #c56473), 0 0 4px var(--lsm-color-danger, #a64953);
       animation: ${uid}-laser-anim 2s infinite ease-in-out;
       z-index: 4;
       pointer-events: none;
@@ -3273,34 +3877,34 @@ async function initApp() {
       align-items: center;
       justify-content: center;
       padding: 12px 8px;
-      background: #f8fafc;
-      border: 1px dashed #cbd5e1;
-      border-radius: 10px;
+      background: var(--lsm-bg-card, #ffffff);
+      border: 1px dashed var(--lsm-border-hover, #d0cec6);
+      border-radius: var(--lsm-radius-card, 10px);
       cursor: pointer;
       transition: all 0.15s ease;
-      color: #334155;
+      color: var(--lsm-text-primary, #403f3a);
       gap: 6px;
       text-align: center;
     }
     .${uid}-dropzone-btn:hover {
-      background: #f1f5f9;
-      border-color: #3b82f6;
-      color: #1d4ed8;
+      background: var(--lsm-bg-hover, #f0efeb);
+      border-color: var(--lsm-accent, #c56473);
+      color: var(--lsm-accent, #c56473);
     }
     .${uid}-dropzone-label {
       font-size: 12px;
-      font-weight: 600;
+      font-weight: 500;
     }
     .${uid}-dropzone-hint {
       font-size: 10px;
-      color: #94a3b8;
+      color: var(--lsm-text-muted, #787670);
     }
 
     /* 识别成功结果展示卡片 */
     .${uid}-result-card {
-      background: #f0fdf4;
-      border: 1px solid #bbf7d0;
-      border-radius: 12px;
+      background: var(--lsm-bg-success, rgba(94, 159, 126, 0.06));
+      border: 1px solid var(--lsm-border-success, rgba(94, 159, 126, 0.25));
+      border-radius: var(--lsm-radius-card, 12px);
       padding: 14px;
       display: flex;
       flex-direction: column;
@@ -3308,40 +3912,40 @@ async function initApp() {
     }
     .${uid}-result-title {
       font-size: 13px;
-      font-weight: 700;
-      color: #166534;
+      font-weight: 600;
+      color: var(--lsm-color-success, #5e9f7e);
       display: flex;
       align-items: center;
       gap: 6px;
     }
     .${uid}-result-domain-warn {
-      background: #fffbeb;
-      border: 1px solid #fde68a;
+      background: var(--lsm-bg-warning, rgba(168, 122, 61, 0.08));
+      border: 1px solid var(--lsm-border-warning, rgba(168, 122, 61, 0.25));
       border-radius: 8px;
       padding: 8px 10px;
       font-size: 11px;
-      color: #b45309;
+      color: var(--lsm-color-warning, #a87a3d);
       line-height: 1.5;
     }
 
     /* 云同步状态指示点与动效 */
     .${uid}-dot-cloud {
-      background: #94a3b8;
+      background: var(--lsm-text-placeholder, #a8a69f);
     }
     .${uid}-dot-cloud.ok {
-      background: #10b981;
-      box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.2);
+      background: var(--lsm-color-success, #5e9f7e);
+      box-shadow: 0 0 0 2px var(--lsm-border-success, rgba(94, 159, 126, 0.2));
     }
     .${uid}-dot-cloud.syncing {
-      background: #3b82f6;
-      box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+      background: var(--lsm-accent, #c56473);
+      box-shadow: 0 0 0 2px var(--lsm-accent-glow, rgba(197, 100, 115, 0.2));
       animation: ${uid}Pulse 1.2s infinite;
     }
     .${uid}-dot-cloud.warn {
-      background: #f59e0b;
+      background: var(--lsm-color-warning, #a87a3d);
     }
     .${uid}-dot-cloud.err {
-      background: #ef4444;
+      background: var(--lsm-color-danger, #a64953);
     }
 
     @keyframes ${uid}Pulse {
@@ -3359,34 +3963,9 @@ async function initApp() {
       animation: ${uid}Spin 0.85s linear infinite;
     }
 
-    /* 云同步专属抽屉弹窗 */
-    .${uid}-sync-dialog {
-      position: absolute;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      background: #ffffff;
-      display: flex;
-      flex-direction: column;
-      padding: 16px 20px 16px;
-      gap: 12px;
-      transform: translateY(100%);
-      transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
-      z-index: 10;
-      overflow: hidden;
-      box-sizing: border-box;
-    }
-    .${uid}-sync-dialog.open {
-      transform: translateY(0);
-    }
-    .${uid}-sync-dialog::-webkit-scrollbar {
-      display: none;
-      width: 0;
-      height: 0;
-    }
-
-    .${uid}-sync-body {
+    /* 云同步专属抽屉 */
+    .${uid}-sync-body,
+    .${uid}-theme-body {
       display: flex;
       flex-direction: column;
       gap: 14px;
@@ -3398,19 +3977,13 @@ async function initApp() {
       min-height: 0;
       padding-right: 0;
       box-sizing: border-box;
-      scrollbar-width: none; /* Firefox 隐藏滚动条 */
-      -ms-overflow-style: none; /* IE / Edge */
-    }
-    .${uid}-sync-body::-webkit-scrollbar {
-      display: none; /* Chrome / Safari / WebKit 隐藏滚动条 */
-      width: 0;
-      height: 0;
     }
 
-    .${uid}-sync-status-card {
-      background: #f8fafc;
-      border: 1px solid #e2e8f0;
-      border-radius: 12px;
+    .${uid}-sync-status-card,
+    .${uid}-theme-current-card {
+      background: var(--lsm-bg-card, #ffffff);
+      border: 1px solid var(--lsm-border, #e3e1db);
+      border-radius: var(--lsm-radius-card, 12px);
       padding: 12px 14px;
       display: flex;
       flex-direction: column;
@@ -3422,8 +3995,8 @@ async function initApp() {
       align-items: center;
       justify-content: space-between;
       padding: 10px 12px;
-      background: #f8fafc;
-      border: 1px solid #e2e8f0;
+      background: var(--lsm-bg-card, #ffffff);
+      border: 1px solid var(--lsm-border, #e3e1db);
       border-radius: 10px;
     }
 
@@ -3431,7 +4004,7 @@ async function initApp() {
     .${uid}-switch {
       position: relative;
       display: inline-block;
-      width: 40px;
+      width: 38px;
       height: 22px;
       flex-shrink: 0;
     }
@@ -3447,7 +4020,7 @@ async function initApp() {
       left: 0;
       right: 0;
       bottom: 0;
-      background-color: #cbd5e1;
+      background-color: var(--lsm-border-hover, #d0cec6);
       transition: .2s;
       border-radius: 22px;
     }
@@ -3459,15 +4032,74 @@ async function initApp() {
       left: 3px;
       bottom: 3px;
       background-color: white;
-      transition: .2s;
+      transition: .2s cubic-bezier(0.22, 1, 0.36, 1);
       border-radius: 50%;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+      box-shadow: 0 1px 3px rgba(0,0,0,0.15);
     }
     .${uid}-switch input:checked + .${uid}-slider {
-      background-color: #2563eb;
+      background-color: var(--lsm-accent, #c56473);
     }
     .${uid}-switch input:checked + .${uid}-slider:before {
-      transform: translateX(18px);
+      transform: translateX(16px);
+    }
+
+    /* 主题管理网格 (Theme Grid) */
+    .${uid}-theme-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      max-height: 200px;
+      overflow-y: auto;
+      padding: 2px;
+    }
+    .${uid}-theme-item {
+      background: var(--lsm-bg-card, #ffffff);
+      border: 1px solid var(--lsm-border, #e3e1db);
+      border-radius: var(--lsm-radius-card, 10px);
+      padding: 10px;
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      position: relative;
+      transition: all 0.2s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+    .${uid}-theme-item:hover {
+      border-color: var(--lsm-accent, #c56473);
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px var(--lsm-accent-glow, rgba(0,0,0,0.06));
+    }
+    .${uid}-theme-item.${uid}-theme-item-active {
+      border-color: var(--lsm-accent, #c56473);
+      background: var(--lsm-accent-bg, rgba(197, 100, 115, 0.04));
+      box-shadow: 0 0 0 1.5px var(--lsm-accent, #c56473);
+    }
+    .${uid}-theme-item-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 4px;
+    }
+    .${uid}-theme-item-title {
+      font-weight: 600;
+      font-size: 12px;
+      color: var(--lsm-text-primary, #24231f);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .${uid}-theme-item-palette {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      margin-top: 2px;
+    }
+    .${uid}-theme-swatch-dot {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      border: 1px solid rgba(0,0,0,0.12);
+      flex-shrink: 0;
     }
 
     /* Toast 提示 */
@@ -3476,13 +4108,13 @@ async function initApp() {
       top: 24px;
       left: 50%;
       transform: translateX(-50%) translateY(-10px);
-      background: #0f172a;
-      color: #ffffff;
+      background: var(--lsm-text-primary, #24231f);
+      color: var(--lsm-bg-paper, #faf9f5);
       padding: 8px 16px;
-      border-radius: 10px;
+      border-radius: 8px;
       font-size: 12px;
       font-weight: 500;
-      box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.3);
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.25);
       opacity: 0;
       pointer-events: none;
       z-index: 2147483647;
@@ -3493,14 +4125,18 @@ async function initApp() {
       transform: translateX(-50%) translateY(0);
     }
     .${uid}-toast.success {
-      background: #059669;
+      background: var(--lsm-color-success, #5e9f7e);
+      color: #ffffff;
     }
     .${uid}-toast.error {
-      background: #dc2626;
+      background: var(--lsm-color-danger, #a64953);
+      color: #ffffff;
     }
     .${uid}-toast.info {
-      background: #0f172a;
+      background: var(--lsm-text-primary, #24231f);
+      color: var(--lsm-bg-paper, #faf9f5);
     }
+
   `;
   shadow.appendChild(style);
 
@@ -3543,6 +4179,25 @@ async function initApp() {
           <span class="${uid}-domain-tag" title="${location.hostname}">${location.hostname}</span>
         </div>
         <div class="${uid}-header-actions">
+          <div class="${uid}-theme-quick-wrap" style="position: relative; display: inline-flex;">
+            <button id="${uid}-btn-quick-theme" class="${uid}-btn-quick-theme" title="快速切换主题" style="font-size: 12px; display: flex; align-items: center; justify-content: center; cursor: pointer;">
+              🎨
+            </button>
+            <div class="${uid}-dropdown-menu ${uid}-theme-quick-menu hidden" id="${uid}-theme-quick-menu" style="top: calc(100% + 7px); right: 0; min-width: 210px; z-index: 60;">
+              <div style="font-size: 11px; font-weight: 600; color: var(--lsm-text-muted); padding: 4px 8px 3px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--lsm-border);">
+                <span>🎨 快速切换主题</span>
+                <span id="${uid}-theme-quick-count" style="font-size: 10px; font-weight: normal; color: var(--lsm-text-placeholder);"></span>
+              </div>
+              <div class="${uid}-theme-quick-list" id="${uid}-theme-quick-list" style="display: flex; flex-direction: column; gap: 2px; max-height: 190px; overflow-y: auto; padding: 4px 0;">
+                <!-- Themes dynamically populated -->
+              </div>
+              <div class="${uid}-dropdown-divider" style="margin: 2px 0;"></div>
+              <div class="${uid}-dropdown-item ${uid}-item-accent" id="${uid}-btn-open-theme-settings" style="font-size: 11.5px; font-weight: 500; padding: 7px 8px;">
+                <span style="font-size: 12px;">⚙️</span>
+                <span>主题风格与个性化设置</span>
+              </div>
+            </div>
+          </div>
           <button id="${uid}-btn-close" title="隐藏">×</button>
         </div>
       </div>
@@ -3621,7 +4276,8 @@ async function initApp() {
                 <span>立即双向同步</span>
               </div>
               <div class="${uid}-dropdown-divider"></div>
-              <div class="${uid}-dropdown-item ${uid}-item-accent" id="${uid}-btn-menu-scan">
+
+            <div class="${uid}-dropdown-item ${uid}-item-accent" id="${uid}-btn-menu-scan">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <path d="M4 7V4h3M20 7V4h-3M4 17v3h3M20 17v3h-3M9 9h6v6H9z"></path>
                 </svg>
@@ -3679,6 +4335,7 @@ async function initApp() {
       <input type="file" id="${uid}-file-restore-direct" accept=".json" style="display: none;" />
       <input type="file" id="${uid}-file-scan-image" accept="image/*" style="display: none;" />
       <input type="file" id="${uid}-file-scan-json" accept=".json" style="display: none;" />
+      <input type="file" id="${uid}-file-theme-json" accept=".json,application/json" style="display: none;" />
       <canvas id="${uid}-scan-hidden-canvas" style="display: none;"></canvas>
 
       <!-- 列表区 -->
@@ -3687,7 +4344,7 @@ async function initApp() {
       <!-- 保存抽屉对话框 -->
       <div class="${uid}-save-dialog" id="${uid}-save-dialog">
         <div class="${uid}-save-dialog-title">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#c56473" stroke-width="2">
             <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
             <polyline points="17 21 17 13 7 13 7 21"></polyline>
             <polyline points="7 3 7 8 15 8"></polyline>
@@ -3701,7 +4358,7 @@ async function initApp() {
         <div class="${uid}-input-group">
           <label class="${uid}-input-label">凭据扫描预览</label>
           <div id="${uid}-preview-box">
-            <div style="font-size: 12px; color: #64748b;">正在扫描当前页面快照凭据...</div>
+            <div style="font-size: 12px; color: #787670;">正在扫描当前页面快照凭据...</div>
           </div>
         </div>
         <div style="margin-top: auto; display: flex; justify-content: flex-end; gap: 8px;">
@@ -3714,7 +4371,7 @@ async function initApp() {
       <div class="${uid}-qr-dialog" id="${uid}-qr-dialog">
         <div class="${uid}-dialog-header">
           <div class="${uid}-dialog-title">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#c56473" stroke-width="2">
               <rect x="3" y="3" width="7" height="7"></rect>
               <rect x="14" y="3" width="7" height="7"></rect>
               <rect x="14" y="14" width="7" height="7"></rect>
@@ -3725,15 +4382,15 @@ async function initApp() {
           <button class="${uid}-dialog-close" id="${uid}-btn-close-qr" title="关闭">✕</button>
         </div>
         <div class="${uid}-qr-box">
-          <div id="${uid}-qr-rec-info" style="font-size: 12px; color: #334155; text-align: center; line-height: 1.5; word-break: break-all; width: 100%;">
-            <strong id="${uid}-qr-rec-name" style="font-size: 14px; color: #0f172a;">快照名称</strong>
-            <div id="${uid}-qr-rec-meta" style="font-size: 11px; color: #64748b; margin-top: 2px;"></div>
+          <div id="${uid}-qr-rec-info" style="font-size: 12px; color: #403f3a; text-align: center; line-height: 1.5; word-break: break-all; width: 100%;">
+            <strong id="${uid}-qr-rec-name" style="font-size: 14px; color: #24231f;">快照名称</strong>
+            <div id="${uid}-qr-rec-meta" style="font-size: 11px; color: #787670; margin-top: 2px;"></div>
           </div>
           <div class="${uid}-qr-canvas-wrap" id="${uid}-qr-canvas-wrap">
             <canvas id="${uid}-qr-canvas"></canvas>
           </div>
           <div class="${uid}-qr-overflow-box" id="${uid}-qr-overflow-box" style="display: none;">
-            <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#d97706" stroke-width="2">
+            <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#a87a3d" stroke-width="2">
               <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
               <line x1="12" y1="9" x2="12" y2="13"></line>
               <line x1="12" y1="17" x2="12.01" y2="17"></line>
@@ -3755,10 +4412,10 @@ async function initApp() {
           <div class="${uid}-qr-chunk-player" id="${uid}-qr-chunk-player" style="display: none;">
             <div class="${uid}-qr-chunk-header">
               <span class="${uid}-qr-chunk-badge" id="${uid}-qr-chunk-badge">
-                <span style="display:inline-block; width:6px; height:6px; border-radius:50%; background:#2563eb;"></span>
+                <span style="display:inline-block; width:6px; height:6px; border-radius:50%; background:#c56473;"></span>
                 <span id="${uid}-qr-chunk-idx-text">分片 1 / 1</span>
               </span>
-              <span style="font-size: 11px; color: #64748b;">500ms / 帧 · 循环播放</span>
+              <span style="font-size: 11px; color: #787670;">500ms / 帧 · 循环播放</span>
             </div>
             <div class="${uid}-qr-chunk-bar-wrap">
               <div class="${uid}-qr-chunk-bar-fill" id="${uid}-qr-chunk-bar-fill" style="width: 0%;"></div>
@@ -3772,7 +4429,7 @@ async function initApp() {
               <button class="${uid}-btn ${uid}-btn-secondary ${uid}-btn-sm" id="${uid}-btn-chunk-exit" style="margin-left: auto; color: #ef4444;" title="退出分片轮播模式">✕ 退出分片</button>
             </div>
           </div>
-          <div id="${uid}-qr-tip" style="font-size: 11px; color: #64748b; text-align: center;">
+          <div id="${uid}-qr-tip" style="font-size: 11px; color: #787670; text-align: center;">
             使用另一台设备或快照助手的「扫码」功能即可一键导入与恢复
           </div>
         </div>
@@ -3802,7 +4459,7 @@ async function initApp() {
       <div class="${uid}-scan-dialog" id="${uid}-scan-dialog">
         <div class="${uid}-dialog-header">
           <div class="${uid}-dialog-title">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#c56473" stroke-width="2">
               <path d="M4 7V4h3M20 7V4h-3M4 17v3h3M20 17v3h-3M9 9h6v6H9z"></path>
             </svg>
             <span id="${uid}-scan-dialog-title-text">扫码与快照导入</span>
@@ -3853,12 +4510,12 @@ async function initApp() {
             </div>
           </div>
 
-          <div style="font-size: 11px; color: #64748b; text-align: center;">或通过以下方式快速导入/恢复快照：</div>
+          <div style="font-size: 11px; color: #787670; text-align: center;">或通过以下方式快速导入/恢复快照：</div>
 
           <!-- 备选方式：图片识别二维码 与 JSON 文件导入 -->
           <div class="${uid}-import-options">
             <div class="${uid}-dropzone-btn" id="${uid}-btn-choose-img" title="上传带有二维码的截图或图片进行解析">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="1.8">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#c56473" stroke-width="1.8">
                 <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
                 <circle cx="8.5" cy="8.5" r="1.5"></circle>
                 <polyline points="21 15 16 10 5 21"></polyline>
@@ -3868,7 +4525,7 @@ async function initApp() {
             </div>
 
             <div class="${uid}-dropzone-btn" id="${uid}-btn-choose-json" title="直接导入 .json 快照文件">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#059669" stroke-width="1.8">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#5e9f7e" stroke-width="1.8">
                 <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
                 <polyline points="14 2 14 8 20 8"></polyline>
                 <line x1="16" y1="13" x2="8" y2="13"></line>
@@ -3884,14 +4541,14 @@ async function initApp() {
         <div id="${uid}-scan-view-result" style="display: none; flex-direction: column; gap: 12px; height: 100%;">
           <div class="${uid}-result-card">
             <div class="${uid}-result-title">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="2.5">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#5e9f7e" stroke-width="2.5">
                 <polyline points="20 6 9 17 4 12"></polyline>
               </svg>
               <span>快照凭据解析成功</span>
             </div>
-            <div style="font-size: 13px; font-weight: 700; color: #0f172a;" id="${uid}-res-name">-</div>
+            <div style="font-size: 13px; font-weight: 700; color: #24231f;" id="${uid}-res-name">-</div>
             <div style="font-size: 11px; color: #475569; display: flex; flex-wrap: wrap; gap: 6px;" id="${uid}-res-chips"></div>
-            <div style="font-size: 11px; color: #64748b;" id="${uid}-res-meta"></div>
+            <div style="font-size: 11px; color: #787670;" id="${uid}-res-meta"></div>
           </div>
 
           <div id="${uid}-res-domain-warning" class="${uid}-result-domain-warn" style="display: none;"></div>
@@ -3935,13 +4592,13 @@ async function initApp() {
           <!-- 状态卡片 -->
           <div class="${uid}-sync-status-card" id="${uid}-sync-status-card">
             <div style="display: flex; align-items: center; justify-content: space-between;">
-              <span style="font-weight: 700; font-size: 13px; color: #0f172a;" id="${uid}-sync-card-status-title">☁️ 未配置云同步</span>
+              <span style="font-weight: 700; font-size: 13px; color: #24231f;" id="${uid}-sync-card-status-title">☁️ 未配置云同步</span>
               <span class="${uid}-chip" id="${uid}-sync-card-badge" style="background:#f1f5f9;color:#64748b;">未连接</span>
             </div>
-            <div style="font-size: 11px; color: #64748b; margin-top: 4px; line-height: 1.4;" id="${uid}-sync-card-desc">
+            <div style="font-size: 11px; color: #787670; margin-top: 4px; line-height: 1.4;" id="${uid}-sync-card-desc">
               配置 GitHub Token 和 Gist ID 后即可实现跨浏览器/多设备快照自动增量同步与安全备份。
             </div>
-            <div style="font-size: 11px; color: #94a3b8; margin-top: 4px;" id="${uid}-sync-card-meta">
+            <div style="font-size: 11px; color: #a8a69f; margin-top: 4px;" id="${uid}-sync-card-meta">
               上次同步: 从未同步
             </div>
           </div>
@@ -3950,11 +4607,11 @@ async function initApp() {
           <div class="${uid}-input-group">
             <div style="display: flex; align-items: center; justify-content: space-between;">
               <label class="${uid}-input-label">GitHub Personal Access Token</label>
-              <a href="https://github.com/settings/tokens/new?scopes=gist&description=WebSnapshotManager" target="_blank" rel="noopener noreferrer" style="font-size: 11px; color: #2563eb; text-decoration: none;">🔑 获取 Token (勾选 gist)</a>
+              <a href="https://github.com/settings/tokens/new?scopes=gist&description=WebSnapshotManager" target="_blank" rel="noopener noreferrer" style="font-size: 11px; color: #c56473; text-decoration: none;">🔑 获取 Token (勾选 gist)</a>
             </div>
             <div style="position: relative; display: flex; align-items: center;">
               <input type="password" class="${uid}-input" id="${uid}-sync-input-token" placeholder="ghp_xxxxxxxxxxxxxxxxxxxx" style="padding-right: 36px;" />
-              <button type="button" id="${uid}-btn-toggle-token-eye" style="position: absolute; right: 8px; border: none; background: none; color: #64748b; cursor: pointer; font-size: 13px; padding: 2px;" title="显示/隐藏 Token">👁️</button>
+              <button type="button" id="${uid}-btn-toggle-token-eye" style="position: absolute; right: 8px; border: none; background: none; color: #787670; cursor: pointer; font-size: 13px; padding: 2px;" title="显示/隐藏 Token">👁️</button>
             </div>
           </div>
 
@@ -3962,7 +4619,7 @@ async function initApp() {
           <div class="${uid}-input-group">
             <div style="display: flex; align-items: center; justify-content: space-between;">
               <label class="${uid}-input-label">Gist ID (留空可点击右侧自动创建)</label>
-              <button type="button" id="${uid}-btn-search-gists" style="font-size: 11px; color: #2563eb; background: none; border: none; cursor: pointer; padding: 0; display: inline-flex; align-items: center; gap: 3px; font-weight: 600;" title="从 GitHub 获取并搜索选择已有 Gist">
+              <button type="button" id="${uid}-btn-search-gists" style="font-size: 11px; color: #c56473; background: none; border: none; cursor: pointer; padding: 0; display: inline-flex; align-items: center; gap: 3px; font-weight: 600;" title="从 GitHub 获取并搜索选择已有 Gist">
                 <span>📋 搜索/选择已有 Gist</span>
               </button>
             </div>
@@ -3987,8 +4644,8 @@ async function initApp() {
           <!-- 自动同步选项 -->
           <div class="${uid}-sync-toggle-row">
             <div>
-              <div style="font-size: 12.5px; font-weight: 600; color: #0f172a;">快照变更时自动同步</div>
-              <div style="font-size: 11px; color: #64748b;">本地保存、修改、删除快照后 2 秒防抖自动同步</div>
+              <div style="font-size: 12.5px; font-weight: 600; color: #24231f;">快照变更时自动同步</div>
+              <div style="font-size: 11px; color: #787670;">本地保存、修改、删除快照后 2 秒防抖自动同步</div>
             </div>
             <label class="${uid}-switch">
               <input type="checkbox" id="${uid}-sync-switch-auto" />
@@ -4003,6 +4660,88 @@ async function initApp() {
             </svg>
             <span>🔄 立即双向增量同步</span>
           </button>
+        </div>
+      </div>
+
+      <!-- 主题风格设置抽屉对话框 -->
+      <div class="${uid}-theme-dialog" id="${uid}-theme-dialog">
+        <div class="${uid}-dialog-header">
+          <div class="${uid}-dialog-title">
+            <span>🎨</span>
+            <span>主题风格与个性化设置</span>
+          </div>
+          <button class="${uid}-dialog-close" id="${uid}-btn-close-theme" title="关闭">✕</button>
+        </div>
+
+        <div class="${uid}-theme-body" id="${uid}-theme-body">
+          <!-- 当前生效主题卡片 -->
+          <div class="${uid}-theme-current-card" id="${uid}-theme-current-card">
+            <div style="display: flex; align-items: center; justify-content: space-between;">
+              <div style="display: flex; align-items: center; gap: 6px;">
+                <strong id="${uid}-cur-theme-name" style="font-size: 13.5px; color: var(--lsm-text-primary);">Yohaku (余白)</strong>
+                <span class="${uid}-chip" id="${uid}-cur-theme-badge" style="background:var(--lsm-accent-bg);color:var(--lsm-accent);border:1px solid var(--lsm-accent-border);">官方预设</span>
+              </div>
+            </div>
+            <div id="${uid}-cur-theme-desc" style="font-size: 11px; color: var(--lsm-text-secondary); margin-top: 4px; line-height: 1.4;">
+              基于 Innei Yohaku 设计体系的米白纸张与梅红质感主题
+            </div>
+            <!-- 色板圆点条 -->
+            <div class="${uid}-theme-swatches" id="${uid}-cur-theme-swatches" style="display: flex; gap: 6px; margin-top: 8px; align-items: center;"></div>
+          </div>
+
+          <!-- 主题选择网格 -->
+          <div class="${uid}-input-group">
+            <div style="display: flex; align-items: center; justify-content: space-between;">
+              <label class="${uid}-input-label">可选主题预设与自定义主题</label>
+              <span style="font-size: 11px; color: var(--lsm-text-muted);" id="${uid}-theme-count-text">共 5 套</span>
+            </div>
+            <div class="${uid}-theme-grid" id="${uid}-theme-grid"></div>
+          </div>
+
+          <!-- 快捷操作按钮组 -->
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+            <button class="${uid}-btn ${uid}-btn-secondary" id="${uid}-btn-export-theme" title="导出当前主题为 JSON 文件或复制到剪贴板">
+              📤 导出主题 (JSON)
+            </button>
+            <button class="${uid}-btn ${uid}-btn-secondary" id="${uid}-btn-import-theme" title="从本地 JSON 文件或剪贴板导入自定义主题">
+              📥 导入主题 (JSON)
+            </button>
+          </div>
+
+          <div style="display: flex; gap: 8px;">
+            <button class="${uid}-btn ${uid}-btn-secondary" id="${uid}-btn-toggle-editor" style="flex: 1;">
+              ✏️ 自定义配色微调与新建
+            </button>
+            <button class="${uid}-btn ${uid}-btn-secondary" id="${uid}-btn-reset-default-theme" style="color: var(--lsm-accent);">
+              🔄 恢复默认主题
+            </button>
+          </div>
+
+          <!-- 折叠自定义编辑器 -->
+          <div class="${uid}-theme-editor-wrap" id="${uid}-theme-editor-wrap" style="display: none; flex-direction: column; gap: 10px; padding: 12px; border: 1px solid var(--lsm-border); border-radius: 10px; background: var(--lsm-bg-card);">
+            <div style="font-weight: 600; font-size: 12.5px; color: var(--lsm-text-primary);">🎨 新建/微调自定义主题</div>
+            <div class="${uid}-input-group">
+              <label class="${uid}-input-label">主题名称</label>
+              <input type="text" class="${uid}-input" id="${uid}-edit-theme-name" placeholder="例如: 薄荷清风" />
+            </div>
+            <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;">
+              <div class="${uid}-input-group">
+                <label class="${uid}-input-label">强调主色 (Accent)</label>
+                <input type="color" class="${uid}-input" id="${uid}-edit-color-accent" style="height: 32px; padding: 2px; cursor: pointer;" value="#c56473" />
+              </div>
+              <div class="${uid}-input-group">
+                <label class="${uid}-input-label">纸张底色 (Paper)</label>
+                <input type="color" class="${uid}-input" id="${uid}-edit-color-paper" style="height: 32px; padding: 2px; cursor: pointer;" value="#faf9f5" />
+              </div>
+              <div class="${uid}-input-group">
+                <label class="${uid}-input-label">顶栏底色 (Header)</label>
+                <input type="color" class="${uid}-input" id="${uid}-edit-color-header" style="height: 32px; padding: 2px; cursor: pointer;" value="#f0efeb" />
+              </div>
+            </div>
+            <button class="${uid}-btn ${uid}-btn-primary" id="${uid}-btn-save-custom-theme" style="margin-top: 4px;">
+              💾 保存并立即应用此主题
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -4102,6 +4841,47 @@ async function initApp() {
 
   const btnMenuCloud = shadow.getElementById(`${uid}-btn-menu-cloud`);
   const btnMenuSyncNow = shadow.getElementById(`${uid}-btn-menu-sync-now`);
+  const btnMenuTheme = shadow.getElementById(`${uid}-btn-menu-theme`);
+
+  // 主题抽屉相关 DOM 元素引用
+  const btnQuickTheme = shadow.getElementById(`${uid}-btn-quick-theme`);
+  const themeQuickMenu = shadow.getElementById(`${uid}-theme-quick-menu`);
+  const themeQuickList = shadow.getElementById(`${uid}-theme-quick-list`);
+  const themeQuickCount = shadow.getElementById(`${uid}-theme-quick-count`);
+  const btnOpenThemeSettings = shadow.getElementById(`${uid}-btn-open-theme-settings`);
+  const themeDialog = shadow.getElementById(`${uid}-theme-dialog`);
+  const btnCloseTheme = shadow.getElementById(`${uid}-btn-close-theme`);
+  const curThemeName = shadow.getElementById(`${uid}-cur-theme-name`);
+  const curThemeBadge = shadow.getElementById(`${uid}-cur-theme-badge`);
+  const curThemeDesc = shadow.getElementById(`${uid}-cur-theme-desc`);
+  const curThemeSwatches = shadow.getElementById(`${uid}-cur-theme-swatches`);
+  const themeGrid = shadow.getElementById(`${uid}-theme-grid`);
+  const themeCountText = shadow.getElementById(`${uid}-theme-count-text`);
+  const btnExportTheme = shadow.getElementById(`${uid}-btn-export-theme`);
+  const btnImportTheme = shadow.getElementById(`${uid}-btn-import-theme`);
+  const btnToggleEditor = shadow.getElementById(`${uid}-btn-toggle-editor`);
+  const btnResetDefaultTheme = shadow.getElementById(`${uid}-btn-reset-default-theme`);
+  const themeEditorWrap = shadow.getElementById(`${uid}-theme-editor-wrap`);
+  const editThemeName = shadow.getElementById(`${uid}-edit-theme-name`);
+  const editColorAccent = shadow.getElementById(`${uid}-edit-color-accent`);
+  const editColorPaper = shadow.getElementById(`${uid}-edit-color-paper`);
+  const editColorHeader = shadow.getElementById(`${uid}-edit-color-header`);
+  const btnSaveCustomTheme = shadow.getElementById(`${uid}-btn-save-custom-theme`);
+  const fileThemeJson = shadow.getElementById(`${uid}-file-theme-json`);
+  const btnMore = shadow.getElementById(`${uid}-btn-more`);
+  const dropdownMenu = shadow.getElementById(`${uid}-dropdown-menu`);
+
+  function closeMenu() {
+    if (dropdownMenu) dropdownMenu.classList.add("hidden");
+  }
+
+  function closeAllDrawers() {
+    if (saveDialog) saveDialog.classList.remove("open");
+    if (qrDialog) qrDialog.classList.remove("open");
+    if (scanDialog) scanDialog.classList.remove("open");
+    if (syncDialog) syncDialog.classList.remove("open");
+    if (themeDialog) themeDialog.classList.remove("open");
+  }
 
   let tempCapturedData = null;
   let toastTimer = null;
@@ -4562,7 +5342,7 @@ async function initApp() {
 
   async function openSaveDialog() {
     inputName.value = getDefaultName();
-    previewBox.innerHTML = `<span style="color: #64748b; font-size: 12px;">正在扫描当前快照...</span>`;
+    previewBox.innerHTML = `<span style="color: #787670; font-size: 12px;">正在扫描当前快照...</span>`;
     saveDialog.classList.add("open");
 
     // 自动聚焦并全选输入框
@@ -4579,15 +5359,15 @@ async function initApp() {
 
       previewBox.innerHTML = `
         <div class="${uid}-grid-preview">
-          <div class="${uid}-stat-box" style="border-color: #fde68a; background: #fffbeb;">
+          <div class="${uid}-stat-box" style="border-color: rgba(168,122,61,0.2); background: rgba(168,122,61,0.06);">
             <div class="${uid}-stat-label" style="color: #b45309;">🍪 Cookie</div>
             <div class="${uid}-stat-num" style="color: #92400e;">${data.summary.cookieCount}</div>
           </div>
-          <div class="${uid}-stat-box" style="border-color: #bbf7d0; background: #f0fdf4;">
+          <div class="${uid}-stat-box" style="border-color: rgba(94,159,126,0.2); background: rgba(94,159,126,0.06);">
             <div class="${uid}-stat-label" style="color: #15803d;">💾 Local</div>
             <div class="${uid}-stat-num" style="color: #166534;">${data.summary.localCount}</div>
           </div>
-          <div class="${uid}-stat-box" style="border-color: #e9d5ff; background: #faf5ff;">
+          <div class="${uid}-stat-box" style="border-color: rgba(61,104,150,0.2); background: rgba(61,104,150,0.06);">
             <div class="${uid}-stat-label" style="color: #7e22ce;">📦 Session</div>
             <div class="${uid}-stat-num" style="color: #6b21a8;">${data.summary.sessionCount}</div>
           </div>
@@ -5202,7 +5982,7 @@ async function initApp() {
       <span class="${uid}-chip" style="background:#eff6ff;color:#2563eb;border-color:#bfdbfe;">🍪 Cookie: ${cookieCount}</span>
       <span class="${uid}-chip" style="background:#f0fdf4;color:#16a34a;border-color:#bbf7d0;">💾 Local: ${localCount}</span>
       <span class="${uid}-chip" style="background:#faf5ff;color:#9333ea;border-color:#e9d5ff;">📦 Session: ${sessionCount}</span>
-      <span class="${uid}-chip" style="background:#f8fafc;color:#475569;border-color:#e2e8f0;">🔒 ${isEnc}</span>
+      <span class="${uid}-chip" style="background:#faf9f5;color:#475569;border-color:#e2e8f0;">🔒 ${isEnc}</span>
     `;
 
     const createTimeVal = targetRecord.createdAt || targetRecord.createTime || (json && (json.exportTime || json.createdAt || json.createTime));
@@ -5339,35 +6119,46 @@ async function initApp() {
     const mask = document.createElement("div");
     mask.className = "lsm-dlg-mask lsm-gist-picker-mask";
     mask.style.cssText =
-      "position:fixed;inset:0;z-index:2147483647;background:rgba(15,23,42,0.6);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);" +
-      "display:flex;align-items:center;justify-content:center;overscroll-behavior:contain;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;";
+      "position:fixed;inset:0;z-index:2147483647;background:rgba(20,19,18,0.45);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);" +
+      "display:flex;align-items:center;justify-content:center;overscroll-behavior:contain;font-family:system-ui,-apple-system,'PingFang SC','Hiragino Sans GB','Microsoft YaHei','Noto Sans SC',sans-serif;";
     bindScrollLock(mask, null);
 
     const box = document.createElement("div");
     box.style.cssText =
-      "width:480px;max-width:calc(100vw - 32px);max-height:85vh;background:#ffffff;border-radius:18px;" +
-      "padding:20px 22px;box-shadow:0 20px 45px -10px rgba(15,23,42,0.25),0 0 0 1px rgba(15,23,42,0.06);box-sizing:border-box;" +
-      "display:flex;flex-direction:column;gap:12px;animation:lsmFadeIn .2s ease-out;";
+      "width:480px;max-width:calc(100vw - 32px);max-height:85vh;background:#faf9f5;border:1px solid #e3e1db;border-radius:16px;" +
+      "padding:20px 22px;box-shadow:0 20px 45px -10px rgba(36,35,31,0.18),0 1px 3px rgba(0,0,0,0.04);box-sizing:border-box;" +
+      "display:flex;flex-direction:column;gap:12px;animation:lsmFadeIn .2s cubic-bezier(0.16,1,0.3,1);";
 
     const headerRow = document.createElement("div");
     headerRow.style.cssText = "display:flex;align-items:center;justify-content:space-between;";
     headerRow.innerHTML = `
       <div style="display:flex;align-items:center;gap:6px;">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#c56473" stroke-width="2">
           <path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"></path>
         </svg>
-        <span style="font-weight:700;font-size:15px;color:#0f172a;">选择已有 Gist 进行绑定 (${gists.length})</span>
+        <span style="font-weight:600;font-size:15px;color:#24231f;">选择已有 Gist 进行绑定 (${gists.length})</span>
       </div>
-      <button class="lsm-picker-close-btn" style="border:none;background:none;font-size:16px;color:#94a3b8;cursor:pointer;padding:4px;" title="关闭">✕</button>
+      <button class="lsm-picker-close-btn" style="border:none;background:none;font-size:16px;color:#787670;cursor:pointer;padding:4px;transition:color .15s;" title="关闭">✕</button>
     `;
+
+    const closeBtn = headerRow.querySelector(".lsm-picker-close-btn");
+    closeBtn.addEventListener("mouseenter", () => closeBtn.style.color = "#24231f");
+    closeBtn.addEventListener("mouseleave", () => closeBtn.style.color = "#787670");
 
     const searchInput = document.createElement("input");
     searchInput.type = "text";
     searchInput.placeholder = "🔍 实时搜索 Gist 描述、文件名或 ID...";
     searchInput.style.cssText =
-      "width:100%;box-sizing:border-box;padding:8px 12px;font-size:12.5px;border:1px solid #cbd5e1;border-radius:8px;outline:none;background:#f8fafc;";
-    searchInput.addEventListener("focus", () => searchInput.style.borderColor = "#2563eb");
-    searchInput.addEventListener("blur", () => searchInput.style.borderColor = "#cbd5e1");
+      "width:100%;box-sizing:border-box;padding:8px 12px;font-size:12.5px;border:1px solid #e3e1db;border-radius:8px;outline:none;" +
+      "background:#ffffff;background-image:linear-gradient(180deg,rgba(197,100,115,0.03) 0%,transparent 26%);color:#24231f;transition:border-color .2s,box-shadow .2s;";
+    searchInput.addEventListener("focus", () => {
+      searchInput.style.borderColor = "rgba(197,100,115,0.35)";
+      searchInput.style.boxShadow = "0 0 0 3px rgba(197,100,115,0.1)";
+    });
+    searchInput.addEventListener("blur", () => {
+      searchInput.style.borderColor = "#e3e1db";
+      searchInput.style.boxShadow = "none";
+    });
 
     const listContainer = document.createElement("div");
     listContainer.style.cssText =
@@ -5375,7 +6166,7 @@ async function initApp() {
     bindScrollLock(listContainer, null);
 
     const close = () => mask.remove();
-    headerRow.querySelector(".lsm-picker-close-btn").addEventListener("click", close);
+    closeBtn.addEventListener("click", close);
 
     function renderGists(filterText = "") {
       listContainer.innerHTML = "";
@@ -5391,7 +6182,7 @@ async function initApp() {
       });
 
       if (!filtered.length) {
-        listContainer.innerHTML = `<div style="text-align:center;padding:24px;color:#94a3b8;font-size:12px;">未匹配到符合条件的 Gist</div>`;
+        listContainer.innerHTML = `<div style="text-align:center;padding:24px;color:#787670;font-size:12px;">未匹配到符合条件的 Gist</div>`;
         return;
       }
 
@@ -5400,18 +6191,19 @@ async function initApp() {
 
       for (const item of filtered) {
         const row = document.createElement("div");
+        const isSnap = !!item.isSnapshotGist;
         row.style.cssText =
-          "border:1px solid " + (item.isSnapshotGist ? "#bfdbfe" : "#e2e8f0") + ";" +
-          "background:" + (item.isSnapshotGist ? "#eff6ff" : "#ffffff") + ";" +
-          "border-radius:10px;padding:10px 12px;cursor:pointer;transition:all 0.15s ease;display:flex;flex-direction:column;gap:4px;";
+          "border:1px solid " + (isSnap ? "rgba(197,100,115,0.25)" : "#e3e1db") + ";" +
+          "background:" + (isSnap ? "rgba(197,100,115,0.04)" : "#ffffff") + ";" +
+          "border-radius:10px;padding:10px 12px;cursor:pointer;transition:all 0.2s cubic-bezier(0.22,1,0.36,1);display:flex;flex-direction:column;gap:4px;";
 
         row.addEventListener("mouseenter", () => {
-          row.style.borderColor = "#2563eb";
+          row.style.borderColor = "#c56473";
           row.style.transform = "translateY(-1px)";
-          row.style.boxShadow = "0 4px 12px rgba(37,99,235,0.12)";
+          row.style.boxShadow = "0 4px 14px rgba(197,100,115,0.12)";
         });
         row.addEventListener("mouseleave", () => {
-          row.style.borderColor = item.isSnapshotGist ? "#bfdbfe" : "#e2e8f0";
+          row.style.borderColor = isSnap ? "rgba(197,100,115,0.25)" : "#e3e1db";
           row.style.transform = "none";
           row.style.boxShadow = "none";
         });
@@ -5421,19 +6213,19 @@ async function initApp() {
 
         row.innerHTML = `
           <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;">
-            <div style="font-size:12.5px;font-weight:700;color:#0f172a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;">
-              ${item.isSnapshotGist ? "🌟 " : ""}${escapeHtml(item.description || "（未命名 Gist）")}
+            <div style="font-size:12.5px;font-weight:600;color:#24231f;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;">
+              ${isSnap ? "🌸 " : ""}${escapeHtml(item.description || "（未命名 Gist）")}
             </div>
-            <span style="font-size:10.5px;padding:2px 6px;border-radius:4px;background:${item.isPublic ? "#fee2e2;color:#991b1b" : "#f1f5f9;color:#475569"};white-space:nowrap;">
+            <span style="font-size:10px;padding:2px 6px;border-radius:4px;background:${item.isPublic ? "rgba(166,73,83,0.08);color:#a64953;border:1px solid rgba(166,73,83,0.2);" : "#f0efeb;color:#5c5a55;border:1px solid #e3e1db;"};white-space:nowrap;font-family:ui-monospace,monospace;">
               ${item.isPublic ? "Public" : "Secret"}
             </span>
           </div>
-          ${item.isSnapshotGist ? `<div style="font-size:11px;color:#2563eb;font-weight:600;">✨ 包含快照备份文件 (${GistSyncEngine.GIST_FILENAME})</div>` : ""}
-          <div style="font-size:11px;color:#64748b;display:flex;align-items:center;justify-content:space-between;gap:4px;">
+          ${isSnap ? `<div style="font-size:11px;color:#c56473;font-weight:500;">✨ 包含快照备份文件 (${GistSyncEngine.GIST_FILENAME})</div>` : ""}
+          <div style="font-size:11px;color:#787670;display:flex;align-items:center;justify-content:space-between;gap:4px;">
             <span>包含文件: <code>${escapeHtml(filesSummary || "无")}</code></span>
-            <span>更新于: ${updateDate}</span>
+            <span>更新于: <span style="font-family:ui-monospace,monospace;font-variant-numeric:tabular-nums;">${updateDate}</span></span>
           </div>
-          <div style="font-size:10px;color:#94a3b8;font-family:monospace;">ID: ${item.id}</div>
+          <div style="font-size:10px;color:#a8a69f;font-family:ui-monospace,monospace;">ID: ${item.id}</div>
         `;
 
         row.addEventListener("click", () => {
@@ -5465,8 +6257,307 @@ async function initApp() {
     document.documentElement.appendChild(mask);
     setTimeout(() => searchInput.focus(), 50);
   }
+  
 
-  function openWindow() {
+
+  // -----------------------------------------------------------------------
+  // 主题抽屉渲染与交互控制器
+  // -----------------------------------------------------------------------
+  function renderQuickThemeMenu() {
+    if (!themeQuickList) return;
+    const active = ThemeEngine.getActiveTheme();
+    const allThemes = ThemeEngine.getAllThemes();
+    if (themeQuickCount) themeQuickCount.textContent = `共 ${allThemes.length} 款`;
+
+    themeQuickList.innerHTML = allThemes
+      .map((t) => {
+        const isActive = t.id === active.id;
+        return `
+          <div class="${uid}-dropdown-item ${isActive ? `${uid}-item-accent` : ""}" data-quick-theme-id="${t.id}" style="display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 6px 8px; border-radius: 6px; cursor: pointer;">
+            <div style="display: flex; align-items: center; gap: 6px; overflow: hidden;">
+              <span style="display: inline-flex; align-items: center; gap: 3px; flex-shrink: 0;">
+                <span class="${uid}-theme-swatch-dot" style="width: 10px; height: 10px; background: ${t.tokens.accent};" title="主色"></span>
+                <span class="${uid}-theme-swatch-dot" style="width: 10px; height: 10px; background: ${t.tokens.bgPaper};" title="底色"></span>
+              </span>
+              <span style="font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(t.name)}</span>
+            </div>
+            ${isActive ? `<span style="color: var(--lsm-accent); font-weight: bold; font-size: 11px; flex-shrink: 0;">✓</span>` : ""}
+          </div>
+        `;
+      })
+      .join("");
+
+    themeQuickList.querySelectorAll("[data-quick-theme-id]").forEach((item) => {
+      item.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const tid = item.getAttribute("data-quick-theme-id");
+        if (tid) {
+          const switched = ThemeEngine.setActiveTheme(tid);
+          renderQuickThemeMenu();
+          renderThemeList();
+          if (themeQuickMenu) themeQuickMenu.classList.add("hidden");
+          showToast(`已切换为主题: ${switched.name}`, "success");
+        }
+      });
+    });
+  }
+
+  function renderThemeList() {
+    const active = ThemeEngine.getActiveTheme();
+    const allThemes = ThemeEngine.getAllThemes();
+
+    if (curThemeName) curThemeName.textContent = active.name;
+    if (curThemeBadge) {
+      curThemeBadge.textContent = active.isBuiltin ? "官方预设" : "自定义";
+      curThemeBadge.style.cssText = active.isBuiltin
+        ? "background:var(--lsm-accent-bg);color:var(--lsm-accent);border:1px solid var(--lsm-accent-border);"
+        : "background:var(--lsm-bg-warning);color:var(--lsm-color-warning);border:1px solid var(--lsm-border-warning);";
+    }
+    if (curThemeDesc) curThemeDesc.textContent = active.description || "暂无描述";
+
+    if (curThemeSwatches) {
+      const swatches = [
+        { label: "Accent", color: active.tokens.accent },
+        { label: "Paper", color: active.tokens.bgPaper },
+        { label: "Header", color: active.tokens.bgHeader },
+        { label: "Success", color: active.tokens.colorSuccess },
+        { label: "Warning", color: active.tokens.colorWarning },
+        { label: "Info", color: active.tokens.colorInfo }
+      ];
+      curThemeSwatches.innerHTML = swatches
+        .map(
+          (s) =>
+            `<span title="${s.label}: ${s.color}" style="display:inline-flex;align-items:center;gap:3px;font-size:10px;color:var(--lsm-text-muted);">
+              <span class="${uid}-theme-swatch-dot" style="background:${s.color};"></span>
+              <span>${s.label}</span>
+            </span>`
+        )
+        .join("");
+    }
+
+    if (themeCountText) themeCountText.textContent = `共 ${allThemes.length} 套`;
+
+    if (themeGrid) {
+      themeGrid.innerHTML = allThemes
+        .map((t) => {
+          const isActive = t.id === active.id;
+          const isBuiltin = !!t.isBuiltin;
+          return `
+            <div class="${uid}-theme-item ${isActive ? `${uid}-theme-item-active` : ""}" data-theme-id="${t.id}">
+              <div class="${uid}-theme-item-header">
+                <div class="${uid}-theme-item-title" title="${escapeHtml(t.name)}">
+                  ${isActive ? "✓ " : ""}${escapeHtml(t.name)}
+                </div>
+                ${
+                  !isBuiltin
+                    ? `<button class="${uid}-btn-del-theme" data-del-id="${t.id}" style="background:none;border:none;color:var(--lsm-color-danger);font-size:12px;cursor:pointer;padding:1px 4px;" title="删除此自定义主题">✕</button>`
+                    : `<span style="font-size:9.5px;color:var(--lsm-text-muted);background:var(--lsm-bg-header);padding:1px 4px;border-radius:3px;">内置</span>`
+                }
+              </div>
+              <div class="${uid}-theme-item-palette">
+                <span class="${uid}-theme-swatch-dot" style="background:${t.tokens.accent};" title="主色"></span>
+                <span class="${uid}-theme-swatch-dot" style="background:${t.tokens.bgPaper};" title="底色"></span>
+                <span class="${uid}-theme-swatch-dot" style="background:${t.tokens.colorSuccess};" title="成功色"></span>
+                <span class="${uid}-theme-swatch-dot" style="background:${t.tokens.colorWarning};" title="提示色"></span>
+              </div>
+            </div>
+          `;
+        })
+        .join("");
+
+      // 绑定主题切换点击
+      themeGrid.querySelectorAll(`.${uid}-theme-item`).forEach((item) => {
+        item.addEventListener("click", (e) => {
+          if (e.target.closest(".btn-del-theme") || e.target.classList.contains(`${uid}-btn-del-theme`)) return;
+          const tid = item.getAttribute("data-theme-id");
+          if (tid) {
+            const switched = ThemeEngine.setActiveTheme(tid);
+            renderThemeList();
+            showToast(`已切换为主题: ${switched.name}`, "success");
+          }
+        });
+      });
+
+      // 绑定自定义主题删除
+      themeGrid.querySelectorAll(`.${uid}-btn-del-theme`).forEach((btn) => {
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const delId = btn.getAttribute("data-del-id");
+          if (confirm("确定要删除此自定义主题吗？")) {
+            try {
+              ThemeEngine.deleteCustomTheme(delId);
+              renderThemeList();
+              showToast("已删除自定义主题", "info");
+            } catch (err) {
+              showToast(err.message, "error");
+            }
+          }
+        });
+      });
+    }
+  }
+
+  function openThemeDialog() {
+    closeAllDrawers();
+    renderThemeList();
+    if (themeDialog) themeDialog.classList.add("open");
+  }
+
+  function closeThemeDialog() {
+    if (themeDialog) themeDialog.classList.remove("open");
+  }
+
+  if (btnCloseTheme) {
+    btnCloseTheme.addEventListener("click", closeThemeDialog);
+  }
+
+  if (btnQuickTheme) {
+    btnQuickTheme.addEventListener("click", (e) => {
+      e.stopPropagation();
+      renderQuickThemeMenu();
+      if (themeQuickMenu) themeQuickMenu.classList.toggle("hidden");
+      if (dropdownMenu) dropdownMenu.classList.add("hidden");
+    });
+  }
+
+  if (btnOpenThemeSettings) {
+    btnOpenThemeSettings.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (themeQuickMenu) themeQuickMenu.classList.add("hidden");
+      openThemeDialog();
+    });
+  }
+
+  if (btnMenuTheme) {
+    btnMenuTheme.addEventListener("click", () => {
+      closeMenu();
+      openThemeDialog();
+    });
+  }
+
+  // 导出当前主题
+  if (btnExportTheme) {
+    btnExportTheme.addEventListener("click", () => {
+      const active = ThemeEngine.getActiveTheme();
+      const jsonStr = ThemeEngine.exportTheme(active.id);
+      const safeName = (active.name || "theme").replace(/[\\/:*?"<>|]/g, "_");
+      downloadJsonFile(`${safeName}_theme.json`, JSON.parse(jsonStr));
+      try {
+        GM_setClipboard(jsonStr, "text");
+        showToast(`主题「${active.name}」已导出文件并复制至剪贴板！`, "success");
+      } catch (e) {
+        showToast(`主题「${active.name}」已导出为 JSON 文件`, "success");
+      }
+    });
+  }
+
+  // 导入自定义主题 (直接唤起文件选择器)
+  function handleThemeFileImport(e) {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      try {
+        const imported = ThemeEngine.importTheme(evt.target.result);
+        renderThemeList();
+        renderQuickThemeMenu();
+        showToast(`主题「${imported.name}」导入成功并已应用！`, "success");
+      } catch (err) {
+        showToast(`导入失败: ${err.message}`, "error");
+      }
+      if (e.target) e.target.value = "";
+    };
+    reader.readAsText(file);
+  }
+
+  if (btnImportTheme) {
+    btnImportTheme.addEventListener("click", () => {
+      let inputEl = fileThemeJson || shadow.getElementById(`${uid}-file-theme-json`);
+      if (!inputEl) {
+        inputEl = document.createElement("input");
+        inputEl.type = "file";
+        inputEl.id = `${uid}-file-theme-json`;
+        inputEl.accept = ".json,application/json";
+        inputEl.style.display = "none";
+        shadow.appendChild(inputEl);
+        inputEl.addEventListener("change", handleThemeFileImport);
+      }
+      inputEl.value = "";
+      inputEl.click();
+    });
+  }
+
+  if (fileThemeJson) {
+    fileThemeJson.addEventListener("change", handleThemeFileImport);
+  }
+
+  // 恢复默认主题
+  if (btnResetDefaultTheme) {
+    btnResetDefaultTheme.addEventListener("click", () => {
+      ThemeEngine.resetToDefault();
+      renderThemeList();
+      renderQuickThemeMenu();
+      showToast("已恢复为 Yohaku (余白) 默认主题", "success");
+    });
+  }
+
+  // 自定义主题微调展开
+  if (btnToggleEditor) {
+    btnToggleEditor.addEventListener("click", () => {
+      const isHidden = themeEditorWrap.style.display === "none";
+      themeEditorWrap.style.display = isHidden ? "flex" : "none";
+      btnToggleEditor.textContent = isHidden ? "🔼 收起配色编辑器" : "✏️ 自定义配色微调与新建";
+      if (isHidden) {
+        const cur = ThemeEngine.getActiveTheme();
+        if (editThemeName) editThemeName.value = cur.name + " (微调)";
+        if (editColorAccent) editColorAccent.value = cur.tokens.accent.startsWith("#") ? cur.tokens.accent.slice(0, 7) : "#c56473";
+        if (editColorPaper) editColorPaper.value = cur.tokens.bgPaper.startsWith("#") ? cur.tokens.bgPaper.slice(0, 7) : "#faf9f5";
+        if (editColorHeader) editColorHeader.value = cur.tokens.bgHeader.startsWith("#") ? cur.tokens.bgHeader.slice(0, 7) : "#f0efeb";
+      }
+    });
+  }
+
+  // 保存新建的自定义主题
+  if (btnSaveCustomTheme) {
+    btnSaveCustomTheme.addEventListener("click", () => {
+      const name = (editThemeName.value || "自定义主题").trim();
+      const accent = editColorAccent.value || "#c56473";
+      const paper = editColorPaper.value || "#faf9f5";
+      const header = editColorHeader.value || "#f0efeb";
+
+      const baseTheme = ThemeEngine.getActiveTheme();
+      const newTokens = Object.assign({}, baseTheme.tokens, {
+        accent: accent,
+        accentBg: accent + "14",
+        accentBorder: accent + "4d",
+        accentHoverBg: accent + "24",
+        accentGlow: accent + "1f",
+        bgPaper: paper,
+        bgHeader: header,
+        bgList: paper,
+        bgHover: header
+      });
+
+      const newThemeObj = {
+        name: name,
+        description: `基于 ${baseTheme.name} 微调的个性化主题`,
+        tokens: newTokens
+      };
+
+      try {
+        const saved = ThemeEngine.saveCustomTheme(newThemeObj);
+        renderThemeList();
+        renderQuickThemeMenu();
+        themeEditorWrap.style.display = "none";
+        btnToggleEditor.textContent = "✏️ 自定义配色微调与新建";
+        showToast(`新主题「${saved.name}」已保存并应用！`, "success");
+      } catch (err) {
+        showToast(`保存失败: ${err.message}`, "error");
+      }
+    });
+  }
+
+    function openWindow() {
     if (ball) {
       ball.style.display = "none";
       ball.classList.add("hidden");
@@ -5504,14 +6595,17 @@ async function initApp() {
   makeDraggable(win, header);
 
   // 阻止管理窗口与抽屉弹窗内滚动穿透到宿主网页（PC 滚轮 + 移动端触摸双重拦截）
-  bindScrollLock(win, `.${uid}-content, .${uid}-save-dialog, .${uid}-qr-dialog, .${uid}-scan-dialog, .${uid}-sync-dialog, .${uid}-sync-body`);
+  bindScrollLock(win, `.${uid}-content, .${uid}-save-dialog, .${uid}-qr-dialog, .${uid}-scan-dialog, .${uid}-sync-dialog, .${uid}-sync-body, .${uid}-theme-dialog, .${uid}-theme-body`);
   bindScrollLock(menuMask, null);
 
   // 悬浮球右上角菜单
-  shadow.querySelector(`.${uid}-ball-close`).addEventListener("click", (e) => {
-    e.stopPropagation();
-    menuMask.classList.remove("hidden");
-  });
+  const ballCloseBtn = shadow.querySelector(`.${uid}-ball-close`);
+  if (ballCloseBtn) {
+    ballCloseBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      menuMask.classList.remove("hidden");
+    });
+  }
 
   menuMask.addEventListener("click", (e) => {
     if (e.target === menuMask) menuMask.classList.add("hidden");
@@ -5724,15 +6818,18 @@ async function initApp() {
   });
 
   // 更多操作下拉菜单
-  const btnMore = shadow.getElementById(`${uid}-btn-more`);
-  const dropdownMenu = shadow.getElementById(`${uid}-dropdown-menu`);
-  btnMore.addEventListener("click", (e) => {
+  if (btnMore) {
+    btnMore.addEventListener("click", (e) => {
     e.stopPropagation();
     dropdownMenu.classList.toggle("hidden");
-  });
+    });
+  }
 
   // 点击外部收起下拉菜单
   wrapper.addEventListener("click", (e) => {
+    if (themeQuickMenu && !themeQuickMenu.classList.contains("hidden") && btnQuickTheme && !btnQuickTheme.contains(e.target) && !themeQuickMenu.contains(e.target)) {
+      themeQuickMenu.classList.add("hidden");
+    }
     if (!dropdownMenu.classList.contains("hidden") && !btnMore.contains(e.target)) {
       dropdownMenu.classList.add("hidden");
     }
@@ -6309,6 +7406,7 @@ async function initApp() {
     ball,
     win,
     openWindow,
+    openThemeDialog,
     closeWindow,
     openCloudSyncDialog,
     closeCloudSyncDialog
