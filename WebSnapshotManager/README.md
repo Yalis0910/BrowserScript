@@ -64,6 +64,13 @@
 
 ---
 
+### 6. 🛡️ 严格 CSP 与 Trusted Types 深度兼容
+- **多策略智能白名单适配**：自动探测并注册 `default`, `snapshotPolicy`, `goog#html`, `dompurify` 等受信任策略，全面兼容 `window.trustedTypes` 与 `unsafeWindow.trustedTypes`。
+- **安全降级渲染引擎 (`setSafeInnerHTML`)**：内置三级 DOM 安全注入降级方案，彻底解决在 GitHub、Google 等开启了 `require-trusted-types-for 'script'` 严格 CSP 的网站上运行报错的问题。
+- **全局 Setter 拦截器**：透明拦截与转译 `innerHTML` 字符串赋值，确保全场景 100% 稳健运行。
+
+---
+
 ## ⚙️ 脚本配置项 (Script Settings)
 
 在 ScriptCat / 油猴脚本的「配置」或设置面板中，可自定义以下选项：
