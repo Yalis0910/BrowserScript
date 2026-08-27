@@ -42,7 +42,7 @@
 
 ### 2. 导入与运行
 1. 打开扩展管理器的 **「管理面板」** -> **「新建脚本 / 添加脚本」**。
-2. 进入对应脚本目录，复制 `index.json.user.js` 的完整代码。
+2. 进入对应脚本目录，复制 `index.user.js` 的完整代码。
 3. 粘贴至编辑器中并保存，脚本即可随匹配网页自动加载运行。
 4. 如需自定义参数，可在扩展管理器的「设置 / 用户配置」面板中修改。
 
@@ -54,19 +54,19 @@
 .
 ├── README.md                     # 项目主仓库说明文档
 ├── AiAgent/                      # ScriptCat Agent 悬浮聊天窗
-│   ├── index.json.user.js        # 脚本源码
+│   ├── index.user.js        # 脚本源码
 │   ├── README.md                 # 详细特性与使用说明
 │   └── UPDATE.md                 # 版本更新日志
 ├── BlockWebsites/                # 禁止打开的网页（防沉迷与时间段限制）
-│   ├── index.json.user.js        # 脚本源码
+│   ├── index.user.js        # 脚本源码
 │   ├── README.md                 # 规则语法与时间段配置说明
 │   └── UPDATE.md                 # 版本更新日志
 ├── CpaToGrok2Api/                # Grok CPA 转 Grok2Api Json
-│   ├── index.json.user.js        # 脚本源码
+│   ├── index.user.js        # 脚本源码
 │   ├── README.md                 # API 调用、JWT 转换与导出说明
 │   └── UPDATE.md                 # 版本更新日志
 └── WebSnapshotManager/           # 网站快照存储与恢复助手
-    ├── index.json.user.js        # 脚本源码
+    ├── index.user.js        # 脚本源码
     ├── logo.gif                  # 标志图
     ├── README.md                 # 安全加密、存储与恢复指南
     └── UPDATE.md                 # 版本更新日志
