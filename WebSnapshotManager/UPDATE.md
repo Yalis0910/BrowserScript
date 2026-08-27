@@ -4,6 +4,14 @@
 
 ---
 
+## [1.4.1] - 2026-08-27
+
+### 🛡️ 兼容 Trusted Types（解决严格 CSP 网页下 `innerHTML` 注入拦截报错）
+- **Trusted Types 策略兼容**：在脚本初始化首部注册全局 `default` 可信类型策略（兼容 `window.trustedTypes` 与 `unsafeWindow.trustedTypes`）；
+- **全网页兼容**：彻底解决在 GitHub、Google 等开启了 `require-trusted-types-for 'script'` 严格 CSP 的网站上加载时抛出 `TypeError: This document requires 'TrustedHTML' assignment` 的问题。
+
+---
+
 ## [1.4.0] - 2026-08-27
 
 ### 🎨 主题组合封装 JSON、自定义主题导入/导出与 Yohaku 初始默认配置
